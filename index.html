@@ -1,3 +1,4 @@
+
 <!doctype html>
 <html lang="en">
 <head>
@@ -5,7 +6,6 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>GLB Screenshot Exporter</title>
 
-  <!-- Import map: keep this pattern. -->
   <script type="importmap">
   {
     "imports": {
@@ -16,253 +16,723 @@
   </script>
 
   <style>
-    :root { --bg:#0b0f1a; --panel:#111a2e; --muted:#8aa0c7; --text:#e7f0ff; --accent:#6ae2ff; }
+    :root {
+      --bg:#0b0f1a;
+      --panel:#111a2e;
+      --muted:#8aa0c7;
+      --text:#e7f0ff;
+      --accent:#6ae2ff;
+      --border:rgba(255,255,255,0.10);
+    }
     *{ box-sizing:border-box; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial; }
     body{ margin:0; background: radial-gradient(1200px 600px at 20% 10%, #16244a 0%, var(--bg) 60%); color:var(--text); }
     header{ padding:14px 16px; border-bottom:1px solid rgba(255,255,255,0.08); display:flex; gap:12px; align-items:center; }
     header h1{ font-size:14px; margin:0; letter-spacing:0.3px; }
     header .hint{ color:var(--muted); font-size:12px; margin-left:auto; }
-    main{ display:grid; grid-template-columns: 420px 1fr; gap:12px; padding:12px; height: calc(100vh - 52px); }
+    main{ display:grid; grid-template-columns: 430px 1fr; gap:12px; padding:12px; height: calc(100vh - 52px); }
     .panel{ background: rgba(17,26,46,0.72); border:1px solid rgba(255,255,255,0.08); border-radius:14px; padding:12px; backdrop-filter: blur(8px); }
     .panel.scroll{ overflow:auto; }
     .row{ display:flex; gap:10px; align-items:center; margin:10px 0; flex-wrap:wrap; }
+    .grid2{ display:grid; grid-template-columns:1fr 1fr; gap:10px; }
     label{ font-size:12px; color:var(--muted); display:block; }
     input[type="file"]{ width:100%; padding:10px; border-radius:10px; border:1px dashed rgba(255,255,255,0.18); background: rgba(0,0,0,0.2); color:var(--text); }
-    input[type="range"], select, input[type="number"], input[type="text"]{ width:100%; }
-    select, input[type="number"], input[type="text"]{
+    input[type="range"], select, input[type="number"], input[type="text"], textarea{ width:100%; }
+    select, input[type="number"], input[type="text"], textarea{
       padding:10px; border-radius:10px; border:1px solid rgba(255,255,255,0.12); background: rgba(0,0,0,0.25); color:var(--text);
     }
+    textarea{ min-height:96px; resize:vertical; }
     input[type="range"]{ accent-color: var(--accent); }
     button{
       cursor:pointer; padding:10px 12px; border-radius:12px; border:1px solid rgba(255,255,255,0.14);
       background: linear-gradient(180deg, rgba(106,226,255,0.18), rgba(106,226,255,0.08));
       color:var(--text); font-weight:600;
     }
-    button.secondary{
-      background: rgba(0,0,0,0.18);
-      border:1px solid rgba(255,255,255,0.12);
-      font-weight:600;
-    }
-    button:disabled{ opacity:0.5; cursor:not-allowed; }
+    button.secondary{ background: rgba(0,0,0,0.18); border:1px solid rgba(255,255,255,0.12); }
+    button.ghost{ background: rgba(0,0,0,0.28); border:1px solid rgba(255,255,255,0.12); }
+    button.active{ background: linear-gradient(180deg, rgba(106,226,255,0.30), rgba(106,226,255,0.12)); }
+    button:disabled{ opacity:0.55; cursor:not-allowed; }
+
     .small{ font-size:12px; color:var(--muted); }
     .kv{ display:grid; grid-template-columns: 120px 1fr; gap:8px; margin-top:10px; }
     .kv div{ font-size:12px; }
-    .log{ height:140px; overflow:auto; white-space:pre-wrap; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-      font-size:11px; padding:10px; border-radius:10px; border:1px solid rgba(255,255,255,0.10); background: rgba(0,0,0,0.25); }
-
-    #view{ position:relative; overflow:hidden; border-radius:14px; padding:0; }
-    canvas{ width:100%; height:100%; display:block; }
-    .badge{
-      position:absolute; top:10px; left:10px; padding:8px 10px; border-radius:999px;
-      background: rgba(0,0,0,0.45); border:1px solid rgba(255,255,255,0.12); font-size:12px; color:var(--text);
+    .log{
+      height:180px; overflow:auto; white-space:pre-wrap; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      font-size:11px; padding:10px; border-radius:10px; border:1px solid rgba(255,255,255,0.10); background: rgba(0,0,0,0.25);
     }
 
-    /* POI overlay */
-    #poiOverlay{ position:absolute; inset:0; pointer-events:none; display:none; }
+    .folder{ border:1px solid rgba(255,255,255,0.08); border-radius:14px; background:rgba(0,0,0,0.12); margin-bottom:10px; overflow:hidden; }
+    .folder summary{
+      list-style:none; cursor:pointer; padding:12px 14px; font-size:13px; font-weight:700; display:flex; align-items:center; gap:10px;
+      user-select:none; background:rgba(255,255,255,0.03);
+    }
+    .folder summary::-webkit-details-marker{ display:none; }
+    .folder summary::before{ content:"▸"; color:var(--accent); font-size:12px; transition:transform 120ms ease; }
+    .folder.open summary::before{ transform:rotate(90deg); }
+    .folderBody{ padding:12px; }
+
+    .controlRow{ display:grid; grid-template-columns: 1fr 92px; gap:10px; align-items:end; margin:8px 0; }
+    .helper{ font-size:11px; color:var(--muted); margin-top:5px; }
+    .sectionTitle{ margin-top:4px; font-size:12px; color:var(--text); opacity:0.92; }
+    .subtleHr{ height:1px; background:rgba(255,255,255,0.08); margin:12px 0; }
+
+    #view{ position:relative; overflow:hidden; border-radius:14px; padding:0; min-height:480px; }
+    canvas{ width:100%; height:100%; display:block; }
+    .mainCanvas{ position:absolute; inset:0; }
+    .badge{
+      position:absolute; top:12px; left:12px; padding:8px 10px; border-radius:999px;
+      background: rgba(0,0,0,0.45); border:1px solid rgba(255,255,255,0.12); font-size:12px; color:var(--text); z-index:4;
+    }
+    #viewportActions{ position:absolute; top:12px; right:12px; display:flex; gap:8px; z-index:4; }
+    #transformToolbar{
+      position:absolute; right:12px; bottom:12px; display:none; gap:8px; z-index:4;
+      background:rgba(0,0,0,0.35); border:1px solid rgba(255,255,255,0.12); padding:8px; border-radius:14px;
+    }
+
+    #previewDock{ position:absolute; left:16px; bottom:16px; display:none; flex-direction:column; gap:12px; z-index:4; }
+    #previewSurface{
+      position:relative; width:min(360px, 34vw); aspect-ratio:16/10; min-width:220px; border-radius:18px; overflow:hidden;
+      border:1px solid rgba(255,255,255,0.16); background:linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.02));
+      box-shadow:0 16px 32px rgba(0,0,0,0.32), inset 0 0 0 1px rgba(255,255,255,0.04); backdrop-filter:blur(8px);
+    }
+    #previewCanvas{ position:absolute; inset:0; width:100%; height:100%; display:block; }
+    #previewSurface::after{
+      content:""; position:absolute; inset:0; pointer-events:none;
+      background:linear-gradient(180deg, rgba(255,255,255,0.08), rgba(255,255,255,0) 26%, rgba(0,0,0,0.12));
+    }
+    #previewLabel, #previewHint{
+      position:absolute; z-index:2; font-size:11px; color:#eaf6ff; padding:6px 8px; border-radius:999px;
+      background:rgba(0,0,0,0.42); border:1px solid rgba(255,255,255,0.14);
+    }
+    #previewLabel{ top:10px; left:10px; letter-spacing:0.08em; text-transform:uppercase; }
+    #previewHint{ right:10px; bottom:10px; }
+    #previewButtons{ display:flex; align-items:center; gap:12px; padding-left:4px; }
+    #captureStill{
+      width:68px; height:68px; border-radius:50%; border:2px solid rgba(255,255,255,0.86); background:rgba(255,255,255,0.12);
+      box-shadow:0 12px 28px rgba(0,0,0,0.32), inset 0 0 0 3px rgba(0,0,0,0.22); position:relative; padding:0;
+    }
+    #captureStill::before{
+      content:""; position:absolute; inset:9px; border-radius:50%; background:radial-gradient(circle at 40% 30%, #ffffff 0%, #f8faff 42%, #dbe6f5 100%);
+    }
+    #captureMeta{ display:flex; flex-direction:column; gap:4px; }
+    #captureFlash{ position:absolute; inset:0; background:#ffffff; opacity:0; pointer-events:none; transition:opacity 160ms ease; z-index:5; }
+    #captureFlash.show{ opacity:0.58; }
+
+    #poiOverlay{ position:absolute; inset:0; pointer-events:none; display:none; z-index:4; }
     #poiTitle{
       position:absolute; top:14px; left:50%; transform:translateX(-50%);
-      background: rgba(0,0,0,0.45); border:1px solid rgba(255,255,255,0.14);
-      padding:10px 12px; border-radius:12px; font-size:12px; pointer-events:none;
+      background: rgba(0,0,0,0.45); border:1px solid rgba(255,255,255,0.14); padding:10px 12px; border-radius:12px; font-size:12px;
     }
-    #poiButtons{
-      position:absolute; right:14px; bottom:14px;
-      display:flex; gap:10px; pointer-events:auto;
-    }
+    #poiButtons{ position:absolute; right:14px; bottom:14px; display:flex; gap:10px; pointer-events:auto; }
 
-    /* Objects list */
-    .sectionTitle{ margin-top:14px; font-size:12px; letter-spacing:0.3px; color:var(--text); opacity:0.9; }
-    .subtleHr{ height:1px; background:rgba(255,255,255,0.08); margin:12px 0; }
     .list{ margin-top:8px; display:flex; flex-direction:column; gap:6px; }
     .itemRow{
-      display:grid;
-      grid-template-columns: 1fr 34px 34px;
-      gap:8px;
-      align-items:center;
-      padding:8px 10px;
-      border:1px solid rgba(255,255,255,0.10);
-      background: rgba(0,0,0,0.18);
-      border-radius:12px;
+      display:grid; grid-template-columns:1fr 34px 34px; gap:8px; align-items:center; padding:8px 10px;
+      border:1px solid rgba(255,255,255,0.10); background: rgba(0,0,0,0.18); border-radius:12px;
     }
-    .itemRow .name{
-      font-size:12px;
-      overflow:hidden;
-      text-overflow:ellipsis;
-      white-space:nowrap;
+    .poiRow{
+      display:grid; grid-template-columns:1fr 34px; gap:8px; align-items:center; padding:8px 10px;
+      border:1px solid rgba(255,255,255,0.10); background: rgba(0,0,0,0.18); border-radius:12px;
     }
+    .itemRow .name, .poiRow .name{ font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; cursor:pointer; }
     .iconBtn{
-      width:34px; height:34px;
-      display:flex; align-items:center; justify-content:center;
-      border-radius:10px;
-      border:1px solid rgba(255,255,255,0.12);
-      background: rgba(0,0,0,0.20);
-      cursor:pointer;
-      user-select:none;
+      width:34px; height:34px; display:flex; align-items:center; justify-content:center; border-radius:10px;
+      border:1px solid rgba(255,255,255,0.12); background: rgba(0,0,0,0.20); cursor:pointer; user-select:none;
     }
     .iconBtn.off{ opacity:0.45; }
-    .poiRow{
-      display:grid;
-      grid-template-columns: 1fr 34px;
-      gap:8px;
-      align-items:center;
-      padding:8px 10px;
-      border:1px solid rgba(255,255,255,0.10);
-      background: rgba(0,0,0,0.18);
-      border-radius:12px;
-      cursor:pointer;
-    }
-    .poiRow .name{ font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+
+    .inlineActionBtn{ min-width:40px; width:40px; height:40px; padding:0; font-size:20px; line-height:1; }
+    .inlineFieldRow{ display:grid; grid-template-columns: 1fr 44px; gap:8px; align-items:center; }
+    .tabRow{ display:flex; gap:8px; margin:8px 0 12px; }
+    .tabBtn{ min-width:92px; }
+    .ccPanel{ display:none; }
+    .ccPanel.active{ display:block; }
+    .curveEditorWrap{ border:1px solid rgba(255,255,255,0.12); border-radius:12px; padding:10px; background:rgba(0,0,0,0.18); }
+    #curveEditorCanvas{ width:100%; max-width:300px; aspect-ratio: 1.2 / 1; border-radius:10px; border:1px solid rgba(255,255,255,0.12); background:linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.01)); cursor:crosshair; }
+    .levelsGrid{ display:grid; grid-template-columns:1fr 92px; gap:10px; align-items:end; margin:8px 0; }
+
   </style>
 </head>
 <body>
   <header>
     <h1>GLB Screenshot Exporter</h1>
-    <div class="hint">Uses import map + local <code>/three</code> folder. HDRIs load per-session (folder/zip).</div>
+    <div class="hint">v1.6.8</div>
   </header>
 
   <main>
-    <section class="panel scroll" id="leftPanel">
-      <label>Load GLB</label>
-      <input id="file" type="file" accept=".glb,.gltf" />
+    <section class="panel scroll">
+      <details class="folder" open>
+        <summary>1. Setup</summary>
+        <div class="folderBody">
+          <label>Load GLB</label>
+          <input id="file" type="file" accept=".glb,.gltf" />
 
-      <div class="row" style="margin-top:14px;">
-        <div style="flex:1">
-          <label>Export count</label>
-          <select id="count">
-            <option value="12">12</option>
-            <option value="15" selected>15</option>
-            <option value="18">18</option>
+          <div class="kv">
+            <div class="small">File</div><div id="fileName" class="small">—</div>
+            <div class="small">Dimensions</div><div id="dims" class="small">—</div>
+            <div class="small">Tris</div><div id="tris" class="small">—</div>
+            <div class="small">Materials</div><div id="mats" class="small">—</div>
+          </div>
+
+          <div class="subtleHr"></div>
+
+          <div class="row">
+            <button id="toggleFloor" type="button">Spawn Floor Plane</button>
+          </div>
+          <div class="helper">Click the model, floor, light helper, or splat proxy in the viewport to attach the transform gizmo. Click empty space to clear it.</div>
+        </div>
+      </details>
+
+      <details class="folder">
+        <summary>2. HDRIs</summary>
+        <div class="folderBody">
+          <div class="row">
+            <button id="hdriLoadFolder" type="button">Load HDRI Folder</button>
+            <button id="hdriClear" type="button" class="secondary">Clear</button>
+          </div>
+
+          <label>HDRI Environment</label>
+          <select id="hdriSelect">
+            <option value="">(none)</option>
           </select>
+          <div class="helper" id="hdriStatus">No HDRIs loaded.</div>
+
+          <input id="hdriFolderInput" type="file" webkitdirectory multiple style="display:none" />
         </div>
-        <div style="flex:1">
-          <label>Image size</label>
-          <select id="imgSize">
-            <option value="512">512</option>
-            <option value="1024">1024</option>
-            <option value="2048" selected>2048</option>
-            <option value="4096">4096</option>
-          </select>
-        </div>
-      </div>
+      </details>
 
-      <div class="row">
-        <div style="flex:1">
-          <label>Frame padding (%)</label>
-          <input id="pad" type="range" min="5" max="40" value="5"/>
-          <div class="small"><span id="padVal">5</span>% extra space around model.</div>
-        </div>
-      </div>
-
-      <div class="row">
-        <div style="flex:1">
-          <label>Background</label>
-          <select id="bg">
-            <option value="white">White</option>
-            <option value="lightgray">Light gray</option>
-            <option value="darkgray">Dark gray</option>
-            <option value="transparent" selected>Transparent</option>
-          </select>
-        </div>
-        <div style="flex:1">
-          <label>Lighting</label>
-          <select id="light">
-            <option value="studio" selected>Studio soft</option>
-            <option value="hard">Hard key</option>
-            <option value="rim">Rim highlight</option>
-          </select>
-        </div>
-      </div>
-
-      <div class="subtleHr"></div>
-
-      <div class="sectionTitle">HDRIs (session-based)</div>
-      <div class="row">
-        <button id="hdriLoadFolder" type="button">Load HDRI Folder</button>
-        <button id="hdriLoadZip" type="button" class="secondary">Load HDRI ZIP</button>
-        <button id="hdriClear" type="button" class="secondary">Clear</button>
-      </div>
-
-      <label>HDRI Environment</label>
-      <select id="hdriSelect">
-        <option value="">(none)</option>
-      </select>
-      <div class="small" style="margin-top:6px;">
-        <span id="hdriStatus">No HDRIs loaded.</span>
-      </div>
-
-      <div class="row" style="margin-top:8px;">
-        <label style="display:flex;gap:8px;align-items:center; flex: 1;">
-          <input id="hdriUseAsBg" type="checkbox" />
-          <span class="small">Use HDRI as background</span>
-        </label>
-      </div>
-
-      <div class="row" style="margin-top:6px;">
-        <div style="flex:1">
-          <label>Cycle HDRIs during export</label>
-          <label style="display:flex;gap:8px;align-items:center;margin-top:6px;">
-            <input id="exportCycleHdris" type="checkbox" checked />
-            <span class="small">Enabled</span>
+      <details class="folder">
+        <summary>3. GSplat Scene (WIP)</summary>
+        <div class="folderBody">
+          <div class="helper">URL mode auto-detects Spark raw splat URLs and Luma capture URLs. File mode loads local Spark-compatible splat files.</div>
+          <div class="row" style="margin-top:6px;">
+            <button type="button" class="ghost active" data-gsplat-tab="url">URL</button>
+            <button type="button" class="ghost" data-gsplat-tab="file">FILE</button>
+          </div>
+          <div class="row">
+            <div style="flex:1">
+              <label>Preset</label>
+              <select id="gsplatPreset">
+                <option value="">None</option>
+                <option value="spark-butterfly">Spark Butterfly Demo</option>
+                <option value="luma-sample">Luma Sample Capture</option>
+              </select>
+            </div>
+          </div>
+          <div id="gsplatUrlPanel">
+            <label>Scene URL</label>
+            <input id="gsplatUrl" type="text" placeholder="https://example.com/scene.spz or https://lumalabs.ai/capture/..." />
+            <div class="row">
+              <button id="loadGsplat" type="button">Load Scene</button>
+              <button id="clearGsplat" type="button" class="secondary">Clear Scene</button>
+            </div>
+          </div>
+          <div id="gsplatFilePanel" style="display:none;">
+            <label>Local splat file</label>
+            <input id="gsplatFile" type="file" accept=".ply,.spz,.splat,.ksplat,.sog,.zip,.rad,.compressed.ply" />
+            <div class="helper">Recommended: .ply, .spz, .splat, .ksplat, .sog, .zip, .rad.</div>
+          </div>
+          <div class="grid2" style="margin-top:10px;">
+            <div>
+              <label>Offset X</label>
+              <input id="gsplatOffsetX" type="number" step="0.01" value="0" />
+            </div>
+            <div>
+              <label>Offset Y</label>
+              <input id="gsplatOffsetY" type="number" step="0.01" value="0" />
+            </div>
+          </div>
+          <div class="grid2" style="margin-top:10px;">
+            <div>
+              <label>Offset Z</label>
+              <input id="gsplatOffsetZ" type="number" step="0.01" value="0" />
+            </div>
+            <div>
+              <label>&nbsp;</label>
+              <button id="gsplatResetOffset" type="button" class="secondary">Reset Offset</button>
+            </div>
+          </div>
+          <label style="display:flex; gap:8px; align-items:center; margin-top:8px;">
+            <input id="gsplatSelectable" type="checkbox" />
+            <span class="small">Allow selecting/moving the splat in the viewport</span>
           </label>
+          <label style="display:flex; gap:8px; align-items:center; margin-top:8px;">
+            <input id="gsplatUseLighting" type="checkbox" checked />
+            <span class="small">Use splat lighting influence when available</span>
+          </label>
+          <div class="grid2" style="margin-top:10px;">
+            <div>
+              <label>GSplat quality</label>
+              <select id="gsplatQuality">
+                <option value="low">Low</option>
+                <option value="medium" selected>Medium</option>
+                <option value="high">High</option>
+              </select>
+            </div>
+            <div>
+              <label>&nbsp;</label>
+              <div class="helper">Higher quality can cost FPS.</div>
+            </div>
+          </div>
         </div>
-        <div style="flex:1">
-          <label>Shots per HDRI</label>
-          <input id="shotsPerHdri" type="number" min="1" max="99" value="1"/>
+      </details>
+
+      <details class="folder" open>
+        <summary>4. Camera Controls</summary>
+        <div class="folderBody">
+          <label>Sensor preset</label>
+          <select id="sensorPreset"></select>
+          <div id="sensorSummary" class="helper">—</div>
+
+          <label style="display:flex; gap:8px; align-items:center; margin-top:8px;">
+            <input id="dofEnabled" type="checkbox" checked />
+            <span class="small">Depth of field</span>
+          </label>
+
+          <div class="controlRow">
+            <div>
+              <label>Focal length (mm)</label>
+              <input id="focalLength" type="range" min="10" max="250" step="0.5" value="45" />
+            </div>
+            <div>
+              <label>&nbsp;</label>
+              <input id="focalLengthNum" type="number" min="10" max="250" step="0.5" value="45" />
+            </div>
+          </div>
+
+          <div class="grid2">
+            <div>
+              <label>Aperture (f/)</label>
+              <input id="apertureF" type="number" min="0.7" max="32" step="0.1" value="8.0" />
+            </div>
+            <div>
+              <label>Focal distance (m)</label>
+              <div class="inlineFieldRow">
+                <input id="focalDistance" type="range" min="0.2" max="50" step="0.1" value="6.0" />
+                <button id="pickFocusPoint" type="button" class="ghost inlineActionBtn" title="Pick a point on the model to set exact focus">+</button>
+              </div>
+              <div class="helper"><span id="focalDistanceVal">6.0</span> m · press + then click the model for exact focus</div>
+            </div>
+          </div>
+
+          <div class="controlRow">
+            <div>
+              <label>Blur Scale Ratio</label>
+              <input id="blurScaleRatio" type="range" min="0.1" max="5" step="0.01" value="1" />
+              <div class="helper">Below 1 increases overall defocus size. Above 1 stretches bokeh horizontally.</div>
+            </div>
+            <div>
+              <label>&nbsp;</label>
+              <input id="blurScaleRatioNum" type="number" min="0.1" max="5" step="0.01" value="1" />
+            </div>
+          </div>
+
+          <div class="controlRow">
+            <div>
+              <label>Yaw</label>
+              <input id="yaw" type="range" min="-180" max="180" step="0.1" value="45" />
+            </div>
+            <div>
+              <label>&nbsp;</label>
+              <input id="yawNum" type="number" min="-180" max="180" step="0.1" value="45" />
+            </div>
+          </div>
+
+          <div class="controlRow">
+            <div>
+              <label>Pitch</label>
+              <input id="pitch" type="range" min="-89" max="89" step="0.1" value="20" />
+            </div>
+            <div>
+              <label>&nbsp;</label>
+              <input id="pitchNum" type="number" min="-89" max="89" step="0.1" value="20" />
+            </div>
+          </div>
+
+          <div class="controlRow">
+            <div>
+              <label>Roll</label>
+              <input id="roll" type="range" min="-180" max="180" step="0.1" value="0" />
+            </div>
+            <div>
+              <label>&nbsp;</label>
+              <input id="rollNum" type="number" min="-180" max="180" step="0.1" value="0" />
+            </div>
+          </div>
+
+          <div class="helper">W/S = forward/back, A = left strafe, D = right strafe, Q/E = up/down, Shift = faster. Recenter snaps the camera back around the model.</div>
         </div>
-      </div>
+      </details>
 
-      <div class="subtleHr"></div>
+      <details class="folder" open>
+        <summary>5. Lighting / Post Processing</summary>
+        <div class="folderBody">
+          <div class="sectionTitle">Scene Lights</div>
+          <div class="grid2" style="margin-top:10px;">
+            <div>
+              <label>Light type</label>
+              <select id="lightTypeSelect">
+                <option value="directional">Directional Light</option>
+                <option value="spot">Spot Light</option>
+                <option value="point">Point Light</option>
+                <option value="rectarea">Rect Area Light</option>
+                <option value="hemisphere">Hemisphere Light</option>
+                <option value="helix">Helix Light</option>
+              </select>
+            </div>
+            <div>
+              <label>&nbsp;</label>
+              <div class="helper" id="lightActionTip">Add a light to begin.</div>
+            </div>
+          </div>
 
-      <div class="sectionTitle">Helix light</div>
-      <div class="row">
-        <label style="display:flex;gap:8px;align-items:center; flex: 1;">
-          <input id="helixEnabled" type="checkbox" checked />
-          <span class="small">Enable helix light during export</span>
-        </label>
-      </div>
+          <div class="row">
+            <button id="addLight" type="button">Add</button>
+            <button id="deleteLight" type="button" class="secondary" disabled title="Select a light to delete.">Delete</button>
+            <button id="updateLightType" type="button" class="secondary" disabled title="Pick a new light type to update.">Update Type</button>
+          </div>
 
-      <label>Intensity</label>
-      <input id="helixIntensity" type="range" min="0" max="60" value="55"/>
-      <div class="small"><span id="helixIntensityVal">55</span></div>
+          <div class="subtleHr"></div>
 
-      <label style="margin-top:8px;">Turns</label>
-      <input id="helixTurns" type="range" min="0.25" max="3.0" step="0.05" value="1.5"/>
-      <div class="small"><span id="helixTurnsVal">1.50</span> turns</div>
+          <div class="sectionTitle">Light Settings</div>
+          <div id="lightSettingsEmpty" class="helper">Select a light in the viewport to edit its settings.</div>
+          <div id="lightSettingsPanel" style="display:none;">
+            <div class="controlRow">
+              <div>
+                <label>Intensity (Watts)</label>
+                <input id="selectedLightIntensity" type="range" min="0" max="5000" step="1" value="1000" />
+              </div>
+              <div>
+                <label>&nbsp;</label>
+                <input id="selectedLightIntensityVal" type="number" value="1000" />
+              </div>
+            </div>
+            <div class="grid2">
+              <div>
+                <label>Colour</label>
+                <input id="selectedLightColor" type="color" value="#ffffff" />
+              </div>
+              <div>
+                <label>Hex</label>
+                <input id="selectedLightColorHex" type="text" value="FFFFFF" />
+              </div>
+            </div>
+            <div class="controlRow" id="selectedLightSizeWrap">
+              <div>
+                <label>Light scale</label>
+                <input id="selectedLightSize" type="range" min="0" max="20" step="0.1" value="1" />
+              </div>
+              <div>
+                <label>&nbsp;</label>
+                <input id="selectedLightSizeVal" type="number" value="1" />
+              </div>
+            </div>
+            <div class="controlRow">
+              <div>
+                <label>Falloff radius</label>
+                <input id="selectedLightRadius" type="range" min="0" max="100" step="0.1" value="0" />
+              </div>
+              <div>
+                <label>&nbsp;</label>
+                <input id="selectedLightRadiusVal" type="number" value="0" />
+              </div>
+            </div>
+            <label style="display:flex; gap:8px; align-items:center; margin-top:8px;">
+              <input id="selectedLightShadows" type="checkbox" />
+              <span class="small">Shadows (experimental)</span>
+            </label>
+          </div>
 
-      <div class="subtleHr"></div>
+          <div class="subtleHr"></div>
 
-      <div class="row">
-        <button id="export" disabled>Export ZIP</button>
-        <button id="reset" disabled class="secondary">Reset view</button>
-      </div>
+          <div class="grid2">
+            <div>
+              <label>Background</label>
+              <select id="bg">
+                <option value="white">White</option>
+                <option value="lightgray">Light gray</option>
+                <option value="darkgray">Dark gray</option>
+                <option value="transparent" selected>Transparent</option>
+              </select>
+            </div>
+            <div>
+              <label>Lighting</label>
+              <select id="light">
+                <option value="studio" selected>Studio soft</option>
+                <option value="hard">Hard key</option>
+                <option value="rim">Rim highlight</option>
+              </select>
+            </div>
+          </div>
 
-      <div class="kv">
-        <div class="small">File</div><div id="fileName" class="small">—</div>
-        <div class="small">Dimensions</div><div id="dims" class="small">—</div>
-        <div class="small">Tris</div><div id="tris" class="small">—</div>
-        <div class="small">Materials</div><div id="mats" class="small">—</div>
-      </div>
+          <div class="controlRow">
+            <div>
+              <label>Preview bloom</label>
+              <input id="previewBloom" type="range" min="0" max="0.6" step="0.01" value="0" />
+            </div>
+            <div>
+              <label>&nbsp;</label>
+              <input id="previewBloomVal" type="number" value="0" disabled />
+            </div>
+          </div>
+          <div class="helper">This is only for the live preview window, not the ZIP export.</div>
 
-      <div class="subtleHr"></div>
+          <label style="display:flex; gap:8px; align-items:center; margin-top:8px;">
+            <input id="aoEnabled" type="checkbox" />
+            <span class="small">Object / floor ambient occlusion overlay</span>
+          </label>
 
-      <div class="sectionTitle">Objects</div>
-      <input id="objFilter" type="text" placeholder="Filter objects…" disabled />
-      <div id="objList" class="list"></div>
+          <div class="subtleHr"></div>
 
-      <div class="sectionTitle" style="margin-top:12px;">Points of Interest</div>
-      <div id="poiList" class="list"></div>
+          <div class="sectionTitle">Colour Correction</div>
+          <div class="tabRow">
+            <button id="ccTabLevels" type="button" class="ghost tabBtn active">Levels</button>
+            <button id="ccTabCurves" type="button" class="ghost tabBtn">Curves</button>
+            <button id="ccReset" type="button" class="secondary">Reset</button>
+          </div>
 
-      <div class="subtleHr"></div>
+          <div id="ccLevelsPanel" class="ccPanel active">
+            <div class="levelsGrid">
+              <div>
+                <label>Input Black</label>
+                <input id="ccInputBlack" type="range" min="0" max="254" step="1" value="0" />
+              </div>
+              <div>
+                <label>&nbsp;</label>
+                <input id="ccInputBlackVal" type="number" min="0" max="254" step="1" value="0" />
+              </div>
+            </div>
+            <div class="levelsGrid">
+              <div>
+                <label>Gamma</label>
+                <input id="ccGamma" type="range" min="0.1" max="3" step="0.01" value="1" />
+              </div>
+              <div>
+                <label>&nbsp;</label>
+                <input id="ccGammaVal" type="number" min="0.1" max="3" step="0.01" value="1" />
+              </div>
+            </div>
+            <div class="levelsGrid">
+              <div>
+                <label>Input White</label>
+                <input id="ccInputWhite" type="range" min="1" max="255" step="1" value="255" />
+              </div>
+              <div>
+                <label>&nbsp;</label>
+                <input id="ccInputWhiteVal" type="number" min="1" max="255" step="1" value="255" />
+              </div>
+            </div>
+            <div class="levelsGrid">
+              <div>
+                <label>Output Black</label>
+                <input id="ccOutputBlack" type="range" min="0" max="254" step="1" value="0" />
+              </div>
+              <div>
+                <label>&nbsp;</label>
+                <input id="ccOutputBlackVal" type="number" min="0" max="254" step="1" value="0" />
+              </div>
+            </div>
+            <div class="levelsGrid">
+              <div>
+                <label>Output White</label>
+                <input id="ccOutputWhite" type="range" min="1" max="255" step="1" value="255" />
+              </div>
+              <div>
+                <label>&nbsp;</label>
+                <input id="ccOutputWhiteVal" type="number" min="1" max="255" step="1" value="255" />
+              </div>
+            </div>
+          </div>
 
-      <label>Log</label>
-      <div id="log" class="log"></div>
+          <div id="ccCurvesPanel" class="ccPanel">
+            <div class="curveEditorWrap">
+              <canvas id="curveEditorCanvas" width="300" height="240"></canvas>
+              <div class="helper">Drag the curve points for final polish. This affects the viewport approximation, live preview, captures, and ZIP exports.</div>
+            </div>
+          </div>
+        </div>
+      </details>
 
-      <!-- hidden pickers -->
-      <input id="hdriFolderInput" type="file" webkitdirectory multiple style="display:none" />
-      <input id="hdriZipInput" type="file" accept=".zip" style="display:none" />
+      <details class="folder">
+        <summary>6. Show / Hide / POI</summary>
+        <div class="folderBody">
+          <label>Filter objects</label>
+          <input id="objFilter" type="text" placeholder="Filter objects…" />
+          <div id="objList" class="list"></div>
+
+          <div class="sectionTitle" style="margin-top:12px;">Points of Interest</div>
+          <div id="poiList" class="list"></div>
+        </div>
+      </details>
+
+      <details class="folder" open>
+        <summary>7. Image Export</summary>
+        <div class="folderBody">
+          <label style="display:flex; gap:8px; align-items:center;">
+            <input id="hdriUseAsBg" type="checkbox" />
+            <span class="small">Use selected HDRI as preview/export background</span>
+          </label>
+          <label style="display:flex; gap:8px; align-items:center; margin-top:8px;">
+            <input id="exportCycleHdris" type="checkbox" />
+            <span class="small">Cycle HDRIs during ZIP export</span>
+          </label>
+
+          <div class="grid2" style="margin-top:10px;">
+            <div>
+              <label>Shots per HDRI</label>
+              <input id="shotsPerHdri" type="number" min="1" max="99" value="1" />
+            </div>
+            <div>
+              <label>Export count</label>
+              <select id="count">
+                <option value="6" selected>6</option>
+                <option value="12">12</option>
+                <option value="15">15</option>
+                <option value="18">18</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="grid2" style="margin-top:10px;">
+            <div>
+              <label>Image size</label>
+              <select id="imgSize">
+                <option value="512">512</option>
+                <option value="1024">1024</option>
+                <option value="2048" selected>2048</option>
+                <option value="4096">4096</option>
+              </select>
+            </div>
+            <div>
+              <label>Frame padding (%)</label>
+              <input id="pad" type="range" min="5" max="40" value="5" />
+              <div class="helper"><span id="padVal">5</span>%</div>
+            </div>
+          </div>
+
+          <div class="grid2" style="margin-top:10px; align-items:end;">
+            <div>
+              <label id="colorSpaceBasicLabel">Colour Space</label>
+              <select id="colorSpaceBasic">
+                <option value="srgb" selected>sRGB</option>
+                <option value="linear">Linear</option>
+                <option value="aces">ACES</option>
+                <option value="agx">AgX</option>
+                <option value="rec709">Rec.709</option>
+                <option value="displayp3">Display P3</option>
+                <option value="log">Log</option>
+                <option value="raw">Raw</option>
+              </select>
+            </div>
+            <div>
+              <label style="display:flex; gap:8px; align-items:center; margin-bottom:10px;">
+                <input id="advancedColorMode" type="checkbox" />
+                <span class="small">Advanced mode</span>
+              </label>
+            </div>
+          </div>
+
+          <div id="advancedColorPanel" style="display:none;">
+            <div class="grid2" style="margin-top:10px;">
+              <div>
+                <label>Input Colour Space</label>
+                <select id="inputColorSpace">
+                  <option value="srgb" selected>sRGB</option>
+                  <option value="linear">Linear</option>
+                  <option value="aces">ACES</option>
+                  <option value="agx">AgX</option>
+                  <option value="rec709">Rec.709</option>
+                  <option value="displayp3">Display P3</option>
+                  <option value="log">Log</option>
+                  <option value="raw">Raw</option>
+                </select>
+              </div>
+              <div>
+                <label>Output Colour Space</label>
+                <select id="outputColorSpace">
+                  <option value="srgb" selected>sRGB</option>
+                  <option value="linear">Linear</option>
+                  <option value="aces">ACES</option>
+                  <option value="agx">AgX</option>
+                  <option value="rec709">Rec.709</option>
+                  <option value="displayp3">Display P3</option>
+                  <option value="log">Log</option>
+                  <option value="raw">Raw</option>
+                </select>
+              </div>
+            </div>
+            <div style="margin-top:10px;">
+              <label>LUT</label>
+              <select id="lutSelect">
+                <option value="standard" selected>Standard (no look)</option>
+                <option value="cinematicWarm">Cinematic Warm</option>
+                <option value="cinematicCool">Cinematic Cool</option>
+                <option value="tealOrange">Teal & Orange</option>
+                <option value="bleachBypass">Bleach Bypass</option>
+                <option value="silverRetention">Silver Retention</option>
+                <option value="blackWhite">Black & White</option>
+                <option value="matrix">Matrix Green</option>
+                <option value="kodak2393">Kodak 2383 Print</option>
+                <option value="fujiF125">Fuji F125 Print</option>
+                <option value="dayForNight">Day for Night</option>
+                <option value="vintageFade">Vintage Fade</option>
+                <option value="highContrastMono">High Contrast Mono</option>
+              </select>
+            </div>
+          </div>
+
+          <label style="display:flex; gap:8px; align-items:center; margin-top:10px;">
+            <input id="addExtraMetadata" type="checkbox" />
+            <span class="small">Add additional metadata?</span>
+          </label>
+          <div id="additionalMetadataWrap" style="display:none; margin-top:10px;">
+            <label>Additional metadata</label>
+            <textarea id="additionalMetadataText" placeholder="Info written here will be added to every image and the JSON file."></textarea>
+          </div>
+
+          <div class="row">
+            <button id="export" disabled>Export ZIP</button>
+            <button id="reset" disabled class="secondary">Reset View</button>
+          </div>
+        </div>
+      </details>
+
+      <details class="folder">
+        <summary>8. Logs</summary>
+        <div class="folderBody">
+          <div id="log" class="log"></div>
+        </div>
+      </details>
     </section>
 
     <section id="view" class="panel">
       <div class="badge" id="badge">No model loaded</div>
+
+      <div id="viewportActions">
+        <button id="recenter" type="button" class="secondary" disabled>Recenter</button>
+        <button id="togglePreview" type="button" class="ghost">Live Preview</button>
+      </div>
+
+      <div id="transformToolbar">
+        <button id="spaceToggle" type="button" class="ghost" title="Toggle gizmo alignment (world/local)">🌐</button>
+        <button id="mode_translate" type="button" class="ghost">Move</button>
+        <button id="mode_rotate" type="button" class="ghost">Rotate</button>
+        <button id="mode_scale" type="button" class="ghost">Scale</button>
+      </div>
+
+      <div id="previewDock">
+        <div id="previewSurface">
+          <canvas id="previewCanvas"></canvas>
+          <div id="previewLabel">Preview</div>
+          <div id="previewHint">Local preview</div>
+        </div>
+        <div id="previewButtons">
+          <button id="captureStill" type="button" title="Capture styled still"></button>
+          <div id="captureMeta">
+            <div class="small">Capture styled still</div>
+            <div class="small">Local polish only</div>
+          </div>
+        </div>
+      </div>
 
       <div id="poiOverlay">
         <div id="poiTitle">Setting POI</div>
@@ -271,6 +741,8 @@
           <button id="poiCancel" type="button" class="secondary">Cancel</button>
         </div>
       </div>
+
+      <div id="captureFlash"></div>
     </section>
   </main>
 

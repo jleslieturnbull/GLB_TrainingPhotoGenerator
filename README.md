@@ -1,32 +1,25 @@
-# GLB Screenshot Exporter (vNext2)
+# GLB Screenshot Exporter + GSplat POC v1.6.8
 
-This is the correct GLB screenshot/export tool (not the UV app).
+This build keeps the simple filenames `index.html` and `app.js`.
 
-## Requirements
-- Serve with a local HTTP server (import maps do not work on file://).
-- Provide a local `./three/` folder next to index.html:
-  - ./three/build/three.module.js
-  - ./three/examples/jsm/...
+## Highlights
+- GSplat section is now labeled **GSplat Scene (WIP)**.
+- A hidden bootstrap directional light is spawned on load at **0 watts** with shadows enabled, and it is kept out of the normal viewport light-selection flow.
+- Camera controls now include a **+ focus picker** beside focal distance so you can click the model and set an exact focus distance.
+- DOF now uses the stored focus point when available, so focal distance changes are more visible and predictable in preview/export.
+- Light scale is only shown for **spot**, **rect area**, and **helix** lights.
+- Directional / spot / point shadow defaults were tightened to reduce acne / striping artifacts.
+- Smart stage controls were removed from the lighting panel.
+- A new **Colour Correction** section was added with **Levels** and **Curves** tabs.
+- Colour correction is applied to preview/export, and the main viewport gets a live approximation so the shot stays visually closer to output.
+- Advanced colour mode now applies both **input** and **output** colour-space transforms more clearly.
+- PNG exports still embed per-image metadata plus optional additional information.
 
 ## Run
+Serve with a local HTTP server, for example:
+
+```bash
 python -m http.server 8080
-then open http://localhost:8080
+```
 
-## HDRIs (session-based)
-- Use "Load HDRI Folder" or "Load HDRI ZIP".
-- Accepts .hdr and .exr files.
-- Uses RGBELoader (HDR) and EXRLoader (EXR), then PMREMGenerator.
-
-Notes:
-- showDirectoryPicker is available only in secure contexts and is not supported everywhere (Chromium is best).
-- EXR files can be large; loading them in-browser may be slow.
-
-## POIs
-- Select an object via 📷 to enter POI mode.
-- Adjust camera/zoom.
-- Done saves POI and adds an additional exported image for each POI.
-
-## Export
-- Exports 12 / 15 / 18 base shots + 1 image per POI.
-- Can cycle HDRIs during export and apply helix light.
-
+Then open `http://localhost:8080`.
