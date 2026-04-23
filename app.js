@@ -2594,87 +2594,88 @@ function getAdditionalMetadataText() {
   return ($("additionalMetadataText")?.value || "").trim();
 }
 
-function getObjectTransformSnapshot(object) {
-  if (!object) return null;
+
+function roundMetaValue(value, digits = 3) {
+  const num = Number(value);
+  return Number.isFinite(num) ? Number(num.toFixed(digits)) : 0;
+}
+
+function compactVec3(value, digits = 3) {
+  if (Array.isArray(value)) return value.slice(0, 3).map((v) => roundMetaValue(v, digits));
+  if (value && typeof value === "object") return [roundMetaValue(value.x, digits), roundMetaValue(value.y, digits), roundMetaValue(value.z, digits)];
+  return [0, 0, 0];
+}
+
+function compactQuat(value, digits = 4) {
+  if (Array.isArray(value)) return value.slice(0, 4).map((v) => roundMetaValue(v, digits));
+  if (value && typeof value === "object") return [
+    roundMetaValue(value.x, digits),
+    roundMetaValue(value.y, digits),
+    roundMetaValue(value.z, digits),
+    roundMetaValue(value.w, digits),
+  ];
+  return [0, 0, 0, 1];
+}
+
+function getCompactBackgroundColor() {
+  if ($("hdriUseAsBg")?.checked && state.hdri.selectedUrl) return "hdri";
+  const cfg = getBackgroundConfig();
+  return cfg.css === "transparent" ? "transparent" : cfg.css;
+}
+
+function getCompactLightPosition(object) {
+  if (!object) return [0, 0, 0];
   object.updateWorldMatrix?.(true, false);
-  return {
-    name: object.name || "",
-    position: object.position?.toArray?.() || [0, 0, 0],
-    rotation: object.rotation ? [object.rotation.x, object.rotation.y, object.rotation.z] : [0, 0, 0],
-    quaternion: object.quaternion?.toArray?.() || [0, 0, 0, 1],
-    scale: object.scale?.toArray?.() || [1, 1, 1],
-    worldPosition: object.getWorldPosition ? object.getWorldPosition(new THREE.Vector3()).toArray() : null,
-    worldQuaternion: object.getWorldQuaternion ? object.getWorldQuaternion(new THREE.Quaternion()).toArray() : null,
-    worldScale: object.getWorldScale ? object.getWorldScale(new THREE.Vector3()).toArray() : null,
-  };
+  const world = object.getWorldPosition ? object.getWorldPosition(new THREE.Vector3()) : object.position || new THREE.Vector3();
+  return compactVec3(world, 3);
 }
 
-function getSceneSnapshotMetadata() {
-  return {
-    camera: {
-      position: state.camera.position.toArray(),
-      quaternion: state.camera.quaternion.toArray(),
-      target: state.controls.target.toArray(),
-      focalLength: state.cameraRig.focalLength,
-      apertureF: state.cameraRig.apertureF,
-      focalDistance: state.cameraRig.focalDistance,
-      blurScaleRatio: state.cameraRig.blurScaleRatio,
-      sensorPreset: state.cameraRig.sensorPreset,
-      sensorWidth: state.cameraRig.sensorWidth,
-      sensorHeight: state.cameraRig.sensorHeight,
-      rollDeg: state.cameraRig.rollDeg,
-      dofEnabled: state.cameraRig.dofEnabled,
-    },
-    transforms: {
-      model: getObjectTransformSnapshot(state.root),
-      floor: getObjectTransformSnapshot(state.floor.mesh),
-      gsplat: getObjectTransformSnapshot(state.gsplat.object),
-      helix: getObjectTransformSnapshot(state.helix.light),
-      sceneLights: state.lights.rigs.map((rig) => ({
-        id: rig.id,
-        name: rig.name,
-        type: rig.type,
-        watts: rig.watts,
-        color: rig.color,
-        size: rig.size,
-        radius: rig.radius,
-        shadows: !!rig.shadows,
-        transform: getObjectTransformSnapshot(rig.group),
-      })),
-    },
-    environment: {
-      hdriSelectedUrl: state.hdri.selectedUrl || "",
-      hdriUsedAsBackground: !!$("hdriUseAsBg")?.checked,
-      background: $("bg")?.value || "transparent",
-      colorCorrection: getLevelsConfig(),
-      lightingPreset: $("light")?.value || "studio",
-      previewBloom: Number($("previewBloom")?.value || 0),
-      aoEnabled: !!$("aoEnabled")?.checked,
-      colorPipeline: getColorPipelineConfig(),
-      imageLabelling: {
-        enabled: !!state.imageLabel.enabled,
-        position: { ...state.imageLabel.position },
-        scale: state.imageLabel.scale,
-        color: state.imageLabel.color,
-        text: state.imageLabel.text,
-      },
-    },
-  };
+function getCompactLightMetadata() {
+  const lights = [];
+  state.lights.rigs.forEach((rig) => {
+    if (!rig?.group) return;
+    lights.push([rig.type, getCompactLightPosition(rig.group)]);
+  });
+  if (state.helix.enabled && state.helix.light && state.helix.intensity > 0.001) {
+    lights.push(["helix", getCompactLightPosition(state.helix.light)]);
+  }
+  return lights;
 }
 
-function buildImageMetadata({ shotName = "capture", fileName = "capture.png", exportContext = "single_capture" } = {}) {
-  const extra = getAdditionalMetadataText();
-  return {
-    app: "GLB Screenshot Exporter",
-    version: "v1.7.0",
-    createdAt: new Date().toISOString(),
-    shotName,
-    fileName,
-    exportContext,
-    additionalInformation: extra || "",
-    scene: getSceneSnapshotMetadata(),
-    modelStats: state.stats,
+function getCompactModelMeasurements() {
+  const dims = state.stats?.dimensionsCM || { x: 0, y: 0, z: 0 };
+  return [
+    roundMetaValue(dims.x, 2),
+    roundMetaValue(dims.y, 2),
+    roundMetaValue(dims.z, 2),
+  ];
+}
+
+function getCurrentFrustumValue() {
+  return roundMetaValue(state.camera?.fov || 0, 3);
+}
+
+function buildCompactShotRecord(name = "capture") {
+  return [
+    name,
+    compactVec3(state.camera?.position, 3),
+    compactQuat(state.camera?.quaternion, 4),
+    getCurrentFrustumValue(),
+  ];
+}
+
+function buildCompactMetadata({ name = "capture", shots = [] } = {}) {
+  const metadata = {
+    n: name,
+    s: shots,
+    b: getCompactBackgroundColor(),
+    l: getCompactLightMetadata(),
+    t: Math.round(state.stats?.triangles || 0),
+    m: getCompactModelMeasurements(),
   };
+  const additional = getAdditionalMetadataText();
+  if (additional) metadata.i = additional;
+  return metadata;
 }
 
 const PNG_SIGNATURE = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]);
@@ -2735,7 +2736,7 @@ async function embedMetadataInPngBlob(blob, metadata) {
   const bytes = new Uint8Array(await blob.arrayBuffer());
   if (bytes.length < 12 || !PNG_SIGNATURE.every((v, i) => bytes[i] === v)) return blob;
   const text = JSON.stringify(metadata);
-  const softwareChunk = buildPngITXtChunk("Software", "GLB Screenshot Exporter v1.7.0");
+  const softwareChunk = buildPngITXtChunk("Software", "GLB Screenshot Exporter v1.7.4");
   const descriptionChunk = buildPngITXtChunk("Description", text);
   const iendIndex = bytes.length - 12;
   const out = concatUint8Arrays([bytes.slice(0, iendIndex), softwareChunk, descriptionChunk, bytes.slice(iendIndex)]);
@@ -3034,7 +3035,8 @@ async function captureCurrentStill() {
     const baseName = (($("fileName").textContent || "capture").split(" (")[0] || "capture").replace(/\.[^/.]+$/, "");
     const ts = new Date().toISOString().replace(/[:.]/g, "-");
     const fileName = `${baseName}_capture_${sizePx}_${ts}.png`;
-    const blob = await renderStyledStillBlob(sizePx, buildImageMetadata({ shotName: "capture", fileName, exportContext: "single_capture" }), "capture");
+    const imageMetadata = buildCompactMetadata({ name: baseName, shots: [buildCompactShotRecord("capture")] });
+    const blob = await renderStyledStillBlob(sizePx, imageMetadata, "capture");
     downloadBlob(blob, fileName);
     flashCapture();
     log("Still captured.");
@@ -3126,38 +3128,18 @@ async function exportZip() {
 
       if (!state.helix.manual) setHelixLightPose(shots.length === 1 ? 0 : i / Math.max(1, shots.length - 1));
       const fileName = `${shot.name}.png`;
-      const imageMetadata = buildImageMetadata({ shotName: shot.name, fileName, exportContext: "zip_export" });
+      const shotRecord = buildCompactShotRecord(shot.name);
+      const imageMetadata = buildCompactMetadata({ name: baseName, shots: [shotRecord] });
       const blob = await renderStyledStillBlob(sizePx, imageMetadata, shot.name);
       imgFolder.file(fileName, blob);
-      shotMeta.push({
-        name: shot.name,
-        file: fileName,
-        yaw: shot.type === "poi" ? null : shot.yaw,
-        pitch: shot.type === "poi" ? null : shot.pitch,
-        roll: state.cameraRig.rollDeg,
-        metadata: imageMetadata,
-      });
+      shotMeta.push(shotRecord);
       log(`Rendered ${shot.name}.png`);
     }
 
-    zip.file("metadata.json", JSON.stringify({
-      version: "v1.7.0",
-      createdAt: new Date().toISOString(),
-      additionalInformation: getAdditionalMetadataText(),
-      export: {
-        imageSize: sizePx,
-        exportCountSetting: count,
-        paddingPercent: Number($("pad").value),
-        background: $("bg").value,
-        lightingPreset: $("light").value,
-        previewBloom: Number($("previewBloom").value),
-        cycleHdris,
-        shotsPerHdri,
-        colorPipeline: getColorPipelineConfig(),
-        shots: shotMeta,
-      },
-      model: state.stats,
-    }, null, 2));
+    zip.file("metadata.json", JSON.stringify(buildCompactMetadata({
+      name: baseName,
+      shots: shotMeta,
+    })));
 
     const outBlob = await zip.generateAsync({ type: "blob", compression: "DEFLATE", compressionOptions: { level: 6 } });
     downloadBlob(outBlob, `export_${baseName}_${ts}.zip`);
