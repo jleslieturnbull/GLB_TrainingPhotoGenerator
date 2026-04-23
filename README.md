@@ -1,25 +1,38 @@
-# GLB Screenshot Exporter + GSplat POC v1.6.8
+# GLB Screenshot Exporter
 
-This build keeps the simple filenames `index.html` and `app.js`.
+Browser tool for loading a GLB, lighting it, previewing shots, and exporting labelled PNGs + metadata.
 
-## Highlights
-- GSplat section is now labeled **GSplat Scene (WIP)**.
-- A hidden bootstrap directional light is spawned on load at **0 watts** with shadows enabled, and it is kept out of the normal viewport light-selection flow.
-- Camera controls now include a **+ focus picker** beside focal distance so you can click the model and set an exact focus distance.
-- DOF now uses the stored focus point when available, so focal distance changes are more visible and predictable in preview/export.
-- Light scale is only shown for **spot**, **rect area**, and **helix** lights.
-- Directional / spot / point shadow defaults were tightened to reduce acne / striping artifacts.
-- Smart stage controls were removed from the lighting panel.
-- A new **Colour Correction** section was added with **Levels** and **Curves** tabs.
-- Colour correction is applied to preview/export, and the main viewport gets a live approximation so the shot stays visually closer to output.
-- Advanced colour mode now applies both **input** and **output** colour-space transforms more clearly.
-- PNG exports still embed per-image metadata plus optional additional information.
+## Install
 
-## Run
-Serve with a local HTTP server, for example:
+1. Keep `index.html`, `app.js`, and the local `three/` folder together.
+2. Serve the folder with a local web server: 
 
 ```bash
 python -m http.server 8080
 ```
 
-Then open `http://localhost:8080`.
+3. Open `http://localhost:8080`.
+
+## Recent update
+
+- Gaussian Splat support via Spark JS framework
+- Improved lighting and shadow workflow
+- Up to 4K export
+- Colour management and colour correction
+- Depth of field controls
+- Optional image labelling
+- PNG/JSON metadata export
+
+## Basic use
+
+1. Load a `.glb` or `.gltf`.
+2. Add an HDRI folder if needed.
+3. Set camera, lighting, colour, and export options.
+4. Use **Live Preview** to check the final frame.
+5. Use **Capture button** for a single PNG, or **Export ZIP** for a full 360 shot set + points of interest.
+
+## Notes
+
+- ZIP export includes shot images and `metadata.json`.
+- Fixed shot names include `front`, `back`, `left`, `right`, `top`, and `bottom`.
+- 2048 is the default export size; 4096 is available.

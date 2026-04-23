@@ -122,7 +122,7 @@
       position:absolute; top:14px; left:50%; transform:translateX(-50%);
       background: rgba(0,0,0,0.45); border:1px solid rgba(255,255,255,0.14); padding:10px 12px; border-radius:12px; font-size:12px;
     }
-    #poiButtons{ position:absolute; right:14px; bottom:14px; display:flex; gap:10px; pointer-events:auto; }
+    #poiButtons{ position:absolute; right:14px; bottom:74px; display:flex; gap:10px; pointer-events:auto; z-index:2; }
 
     .list{ margin-top:8px; display:flex; flex-direction:column; gap:6px; }
     .itemRow{
@@ -140,22 +140,58 @@
     }
     .iconBtn.off{ opacity:0.45; }
 
-    .inlineActionBtn{ min-width:40px; width:40px; height:40px; padding:0; font-size:20px; line-height:1; }
-    .inlineFieldRow{ display:grid; grid-template-columns: 1fr 44px; gap:8px; align-items:center; }
-    .tabRow{ display:flex; gap:8px; margin:8px 0 12px; }
-    .tabBtn{ min-width:92px; }
-    .ccPanel{ display:none; }
-    .ccPanel.active{ display:block; }
-    .curveEditorWrap{ border:1px solid rgba(255,255,255,0.12); border-radius:12px; padding:10px; background:rgba(0,0,0,0.18); }
-    #curveEditorCanvas{ width:100%; max-width:300px; aspect-ratio: 1.2 / 1; border-radius:10px; border:1px solid rgba(255,255,255,0.12); background:linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.01)); cursor:crosshair; }
-    .levelsGrid{ display:grid; grid-template-columns:1fr 92px; gap:10px; align-items:end; margin:8px 0; }
+    textarea{
+      width:100%; min-height:90px; padding:10px; border-radius:10px; border:1px solid rgba(255,255,255,0.12); background: rgba(0,0,0,0.25); color:var(--text); resize:vertical;
+    }
+    .levelsGraph{ margin-top:10px; border:1px solid rgba(255,255,255,0.10); border-radius:14px; background:rgba(0,0,0,0.18); padding:12px; }
+    .levelsGraphBar{ height:96px; border-radius:10px; background:
+      linear-gradient(180deg, rgba(255,255,255,0.10), rgba(255,255,255,0.02)),
+      linear-gradient(90deg, #000 0%, #333 14%, #777 38%, #bbb 62%, #eee 82%, #fff 100%);
+      border:1px solid rgba(255,255,255,0.10);
+      position:relative;
+      overflow:hidden;
+      cursor:pointer;
+      touch-action:none;
+    }
+    .levelsGraphBar::after{ content:""; position:absolute; inset:0; background:linear-gradient(180deg, rgba(255,255,255,0.12), rgba(255,255,255,0)); mix-blend-mode:screen; }
+    .levelsGraphLane{ position:absolute; left:0; right:0; top:0; bottom:0; pointer-events:none; }
+    .levelsGraphGuides{ position:absolute; inset:0; background:linear-gradient(90deg, rgba(255,255,255,0.08) 0, rgba(255,255,255,0.08) 1px, transparent 1px, transparent 25%), linear-gradient(180deg, rgba(255,255,255,0.06) 0, rgba(255,255,255,0.06) 1px, transparent 1px, transparent 33.333%); background-size:25% 100%, 100% 33.333%; opacity:0.5; }
+    .levelsGraphRow{ position:absolute; left:0; right:0; height:28px; }
+    .levelsGraphRow.output{ top:8px; }
+    .levelsGraphRow.input{ bottom:8px; }
+    .levelsGraphConnector{ position:absolute; top:22px; bottom:22px; width:1px; background:rgba(255,255,255,0.22); }
+    .levelsGraphPin{ position:absolute; width:0; height:0; transform:translateX(-50%); pointer-events:auto; }
+    .levelsGraphPin::before{ content:""; display:block; width:0; height:0; border-left:9px solid transparent; border-right:9px solid transparent; }
+    .levelsGraphPin.output::before{ border-top:14px solid rgba(106,226,255,0.95); filter:drop-shadow(0 2px 6px rgba(0,0,0,0.35)); }
+    .levelsGraphPin.input::before{ border-bottom:14px solid rgba(255,216,122,0.95); filter:drop-shadow(0 -2px 6px rgba(0,0,0,0.35)); }
+    .levelsGraphPin.gamma::before{ border-bottom:14px solid rgba(255,255,255,0.96); }
+    .levelsGraphPin.output{ top:0; }
+    .levelsGraphPin.input, .levelsGraphPin.gamma{ bottom:0; }
+    .levelsGraphPinLabel{ position:absolute; font-size:10px; color:rgba(231,240,255,0.9); padding:2px 5px; border-radius:999px; background:rgba(0,0,0,0.36); border:1px solid rgba(255,255,255,0.10); white-space:nowrap; transform:translateX(-50%); pointer-events:none; }
+    .levelsGraphPinLabel.output{ top:26px; }
+    .levelsGraphPinLabel.input, .levelsGraphPinLabel.gamma{ bottom:26px; }
 
+    #imageLabelOverlay{ position:absolute; inset:0; pointer-events:none; display:none; z-index:4; }
+    #imageLabelTitle{
+      position:absolute; top:14px; left:50%; transform:translateX(-50%);
+      background: rgba(0,0,0,0.45); border:1px solid rgba(255,255,255,0.14); padding:10px 12px; border-radius:12px; font-size:12px;
+    }
+    #imageLabelButtons{ position:absolute; right:14px; bottom:74px; display:flex; gap:10px; pointer-events:auto; align-items:center; z-index:2; }
+    #imageLabelGhost{
+      position:absolute; left:50%; top:90%; transform:translate(-50%, -50%); display:none; z-index:4; pointer-events:auto;
+      font-weight:700; color:#fff; text-shadow:0 2px 8px rgba(0,0,0,0.4); user-select:none; cursor:move;
+      border:1px dashed rgba(255,255,255,0.26); border-radius:10px; padding:8px 12px; background:rgba(0,0,0,0.10);
+    }
+    #imageLabelScaleHandle{
+      position:absolute; width:16px; height:16px; right:-8px; bottom:-8px; border-radius:50%;
+      background:var(--accent); border:2px solid rgba(0,0,0,0.45); cursor:nwse-resize;
+    }
   </style>
 </head>
 <body>
   <header>
     <h1>GLB Screenshot Exporter</h1>
-    <div class="hint">v1.6.8</div>
+    <div class="hint">v1.7.2</div>
   </header>
 
   <main>
@@ -178,7 +214,7 @@
           <div class="row">
             <button id="toggleFloor" type="button">Spawn Floor Plane</button>
           </div>
-          <div class="helper">Click the model, floor, light helper, or splat proxy in the viewport to attach the transform gizmo. Click empty space to clear it.</div>
+          <div class="helper">Click the model, floor, or splat proxy in the viewport to attach the transform gizmo. Lights are adjusted from the object list so their fixtures stay invisible in the shot.</div>
         </div>
       </details>
 
@@ -284,7 +320,7 @@
           <div id="sensorSummary" class="helper">—</div>
 
           <label style="display:flex; gap:8px; align-items:center; margin-top:8px;">
-            <input id="dofEnabled" type="checkbox" checked />
+            <input id="dofEnabled" type="checkbox" />
             <span class="small">Depth of field</span>
           </label>
 
@@ -306,11 +342,11 @@
             </div>
             <div>
               <label>Focal distance (m)</label>
-              <div class="inlineFieldRow">
-                <input id="focalDistance" type="range" min="0.2" max="50" step="0.1" value="6.0" />
-                <button id="pickFocusPoint" type="button" class="ghost inlineActionBtn" title="Pick a point on the model to set exact focus">+</button>
+              <div style="display:flex; gap:8px; align-items:center;">
+                <input id="focalDistance" type="range" min="0.2" max="50" step="0.1" value="6.0" style="flex:1;" />
+                <button id="focusPickBtn" type="button" class="secondary" title="Click a point on the model to set perfect focus distance">+</button>
               </div>
-              <div class="helper"><span id="focalDistanceVal">6.0</span> m · press + then click the model for exact focus</div>
+              <div class="helper"><span id="focalDistanceVal">6.0</span> m · Use + to pick a focus point on the model.</div>
             </div>
           </div>
 
@@ -364,7 +400,7 @@
       </details>
 
       <details class="folder" open>
-        <summary>5. Lighting / Post Processing</summary>
+        <summary>5. Lighting</summary>
         <div class="folderBody">
           <div class="sectionTitle">Scene Lights</div>
           <div class="grid2" style="margin-top:10px;">
@@ -381,7 +417,7 @@
             </div>
             <div>
               <label>&nbsp;</label>
-              <div class="helper" id="lightActionTip">Add a light to begin.</div>
+              <div class="helper" id="lightActionTip">Add a light to begin, then select it from the object list to edit it.</div>
             </div>
           </div>
 
@@ -416,9 +452,9 @@
                 <input id="selectedLightColorHex" type="text" value="FFFFFF" />
               </div>
             </div>
-            <div class="controlRow" id="selectedLightSizeWrap">
+            <div id="lightSizeRow" class="controlRow" style="display:none;">
               <div>
-                <label>Light scale</label>
+                <label>Light size</label>
                 <input id="selectedLightSize" type="range" min="0" max="20" step="0.1" value="1" />
               </div>
               <div>
@@ -446,21 +482,16 @@
 
           <div class="grid2">
             <div>
-              <label>Background</label>
-              <select id="bg">
-                <option value="white">White</option>
-                <option value="lightgray">Light gray</option>
-                <option value="darkgray">Dark gray</option>
-                <option value="transparent" selected>Transparent</option>
-              </select>
-            </div>
-            <div>
               <label>Lighting</label>
               <select id="light">
                 <option value="studio" selected>Studio soft</option>
                 <option value="hard">Hard key</option>
                 <option value="rim">Rim highlight</option>
               </select>
+            </div>
+            <div>
+              <label>&nbsp;</label>
+              <div class="helper">Scene light fixtures stay visible in the viewport only. Preview/export hides them automatically.</div>
             </div>
           </div>
 
@@ -480,75 +511,6 @@
             <input id="aoEnabled" type="checkbox" />
             <span class="small">Object / floor ambient occlusion overlay</span>
           </label>
-
-          <div class="subtleHr"></div>
-
-          <div class="sectionTitle">Colour Correction</div>
-          <div class="tabRow">
-            <button id="ccTabLevels" type="button" class="ghost tabBtn active">Levels</button>
-            <button id="ccTabCurves" type="button" class="ghost tabBtn">Curves</button>
-            <button id="ccReset" type="button" class="secondary">Reset</button>
-          </div>
-
-          <div id="ccLevelsPanel" class="ccPanel active">
-            <div class="levelsGrid">
-              <div>
-                <label>Input Black</label>
-                <input id="ccInputBlack" type="range" min="0" max="254" step="1" value="0" />
-              </div>
-              <div>
-                <label>&nbsp;</label>
-                <input id="ccInputBlackVal" type="number" min="0" max="254" step="1" value="0" />
-              </div>
-            </div>
-            <div class="levelsGrid">
-              <div>
-                <label>Gamma</label>
-                <input id="ccGamma" type="range" min="0.1" max="3" step="0.01" value="1" />
-              </div>
-              <div>
-                <label>&nbsp;</label>
-                <input id="ccGammaVal" type="number" min="0.1" max="3" step="0.01" value="1" />
-              </div>
-            </div>
-            <div class="levelsGrid">
-              <div>
-                <label>Input White</label>
-                <input id="ccInputWhite" type="range" min="1" max="255" step="1" value="255" />
-              </div>
-              <div>
-                <label>&nbsp;</label>
-                <input id="ccInputWhiteVal" type="number" min="1" max="255" step="1" value="255" />
-              </div>
-            </div>
-            <div class="levelsGrid">
-              <div>
-                <label>Output Black</label>
-                <input id="ccOutputBlack" type="range" min="0" max="254" step="1" value="0" />
-              </div>
-              <div>
-                <label>&nbsp;</label>
-                <input id="ccOutputBlackVal" type="number" min="0" max="254" step="1" value="0" />
-              </div>
-            </div>
-            <div class="levelsGrid">
-              <div>
-                <label>Output White</label>
-                <input id="ccOutputWhite" type="range" min="1" max="255" step="1" value="255" />
-              </div>
-              <div>
-                <label>&nbsp;</label>
-                <input id="ccOutputWhiteVal" type="number" min="1" max="255" step="1" value="255" />
-              </div>
-            </div>
-          </div>
-
-          <div id="ccCurvesPanel" class="ccPanel">
-            <div class="curveEditorWrap">
-              <canvas id="curveEditorCanvas" width="300" height="240"></canvas>
-              <div class="helper">Drag the curve points for final polish. This affects the viewport approximation, live preview, captures, and ZIP exports.</div>
-            </div>
-          </div>
         </div>
       </details>
 
@@ -565,7 +527,93 @@
       </details>
 
       <details class="folder" open>
-        <summary>7. Image Export</summary>
+        <summary>7. Colour Correction</summary>
+        <div class="folderBody">
+          <div class="helper">Levels correction affects the viewport approximation, live preview, still captures, and ZIP exports.</div>
+          <div class="levelsGraph">
+            <div class="levelsGraphBar" id="levelsGraphBar">
+              <div class="levelsGraphGuides"></div>
+              <div class="levelsGraphLane">
+                <div class="levelsGraphConnector" id="levelsGraphInputBlackLine"></div>
+                <div class="levelsGraphConnector" id="levelsGraphGammaLine"></div>
+                <div class="levelsGraphConnector" id="levelsGraphInputWhiteLine"></div>
+                <div class="levelsGraphConnector" id="levelsGraphOutputBlackLine"></div>
+                <div class="levelsGraphConnector" id="levelsGraphOutputWhiteLine"></div>
+                <div class="levelsGraphRow output">
+                  <div class="levelsGraphPin output" id="levelsGraphOutBlackPin" data-level-pin="outBlack" title="Output black"></div>
+                  <div class="levelsGraphPin output" id="levelsGraphOutWhitePin" data-level-pin="outWhite" title="Output white"></div>
+                  <div class="levelsGraphPinLabel output" id="levelsGraphOutBlackLabel">Out B</div>
+                  <div class="levelsGraphPinLabel output" id="levelsGraphOutWhiteLabel">Out W</div>
+                </div>
+                <div class="levelsGraphRow input">
+                  <div class="levelsGraphPin input" id="levelsGraphInBlackPin" data-level-pin="inBlack" title="Input black"></div>
+                  <div class="levelsGraphPin gamma" id="levelsGraphGammaPin" data-level-pin="gamma" title="Gamma"></div>
+                  <div class="levelsGraphPin input" id="levelsGraphInWhitePin" data-level-pin="inWhite" title="Input white"></div>
+                  <div class="levelsGraphPinLabel input" id="levelsGraphInBlackLabel">In B</div>
+                  <div class="levelsGraphPinLabel gamma" id="levelsGraphGammaLabel">Gamma</div>
+                  <div class="levelsGraphPinLabel input" id="levelsGraphInWhiteLabel">In W</div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="controlRow" style="margin-top:12px;">
+            <div>
+              <label>Input black</label>
+              <input id="levelsInBlack" type="range" min="0" max="254" step="1" value="0" />
+            </div>
+            <div>
+              <label>&nbsp;</label>
+              <input id="levelsInBlackVal" type="number" min="0" max="254" step="1" value="0" />
+            </div>
+          </div>
+          <div class="controlRow">
+            <div>
+              <label>Gamma</label>
+              <input id="levelsGamma" type="range" min="0.1" max="5" step="0.01" value="1" />
+            </div>
+            <div>
+              <label>&nbsp;</label>
+              <input id="levelsGammaVal" type="number" min="0.1" max="5" step="0.01" value="1" />
+            </div>
+          </div>
+          <div class="controlRow">
+            <div>
+              <label>Input white</label>
+              <input id="levelsInWhite" type="range" min="1" max="255" step="1" value="255" />
+            </div>
+            <div>
+              <label>&nbsp;</label>
+              <input id="levelsInWhiteVal" type="number" min="1" max="255" step="1" value="255" />
+            </div>
+          </div>
+          <div class="controlRow">
+            <div>
+              <label>Output black</label>
+              <input id="levelsOutBlack" type="range" min="0" max="254" step="1" value="0" />
+            </div>
+            <div>
+              <label>&nbsp;</label>
+              <input id="levelsOutBlackVal" type="number" min="0" max="254" step="1" value="0" />
+            </div>
+          </div>
+          <div class="controlRow">
+            <div>
+              <label>Output white</label>
+              <input id="levelsOutWhite" type="range" min="1" max="255" step="1" value="255" />
+            </div>
+            <div>
+              <label>&nbsp;</label>
+              <input id="levelsOutWhiteVal" type="number" min="1" max="255" step="1" value="255" />
+            </div>
+          </div>
+          <div class="row">
+            <button id="resetLevels" type="button" class="secondary">Reset Levels</button>
+          </div>
+        </div>
+      </details>
+
+      <details class="folder" open>
+        <summary>8. Image Export</summary>
         <div class="folderBody">
           <label style="display:flex; gap:8px; align-items:center;">
             <input id="hdriUseAsBg" type="checkbox" />
@@ -575,6 +623,16 @@
             <input id="exportCycleHdris" type="checkbox" />
             <span class="small">Cycle HDRIs during ZIP export</span>
           </label>
+
+          <div style="margin-top:10px;">
+            <label>Background</label>
+            <select id="bg">
+              <option value="white">White</option>
+              <option value="lightgray">Light gray</option>
+              <option value="darkgray">Dark gray</option>
+              <option value="transparent" selected>Transparent</option>
+            </select>
+          </div>
 
           <div class="grid2" style="margin-top:10px;">
             <div>
@@ -681,6 +739,12 @@
           </div>
 
           <label style="display:flex; gap:8px; align-items:center; margin-top:10px;">
+            <input id="enableImageLabelling" type="checkbox" />
+            <span class="small">Enable Image Labelling?</span>
+          </label>
+          <div class="helper">When enabled, exported images will stamp the shot name onto the image using your saved placement and colour.</div>
+
+          <label style="display:flex; gap:8px; align-items:center; margin-top:10px;">
             <input id="addExtraMetadata" type="checkbox" />
             <span class="small">Add additional metadata?</span>
           </label>
@@ -697,7 +761,7 @@
       </details>
 
       <details class="folder">
-        <summary>8. Logs</summary>
+        <summary>9. Logs</summary>
         <div class="folderBody">
           <div id="log" class="log"></div>
         </div>
@@ -742,6 +806,18 @@
         </div>
       </div>
 
+      <div id="imageLabelOverlay">
+        <div id="imageLabelTitle">Image Labelling Mode</div>
+        <div id="imageLabelButtons">
+          <label style="display:flex; gap:8px; align-items:center; background:rgba(0,0,0,0.45); border:1px solid rgba(255,255,255,0.14); padding:8px 10px; border-radius:12px;">
+            <span class="small">Text colour</span>
+            <input id="imageLabelColor" type="color" value="#ffffff" style="width:44px; height:32px; padding:0; border:none; background:none;" />
+          </label>
+          <button id="imageLabelDone" type="button">Done</button>
+          <button id="imageLabelCancel" type="button" class="secondary">Cancel</button>
+        </div>
+      </div>
+      <div id="imageLabelGhost">angle placeholder<div id="imageLabelScaleHandle"></div></div>
       <div id="captureFlash"></div>
     </section>
   </main>

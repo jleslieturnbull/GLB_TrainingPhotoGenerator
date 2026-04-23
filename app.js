@@ -60,7 +60,7 @@ const state = {
   pointer: new THREE.Vector2(),
 
   root: null,
-  floor: { mesh: null },
+  floor: { mesh: null, aoMesh: null, aoTexture: null },
   stats: null,
   modelCenter: new THREE.Vector3(),
   modelRadius: 1,
@@ -81,9 +81,8 @@ const state = {
     focalLength: 45,
     apertureF: 8.0,
     focalDistance: 6.0,
-    dofEnabled: true,
+    dofEnabled: false,
     blurScaleRatio: 1.0,
-    focusWorldPoint: null,
     rollDeg: 0,
   },
 
@@ -97,10 +96,6 @@ const state = {
   ui: {
     cameraSyncPending: false,
     lastCameraSyncAt: 0,
-  },
-
-  focusPick: {
-    active: false,
   },
 
   hdri: {
@@ -139,23 +134,6 @@ const state = {
     advancedColor: false,
   },
 
-  colorCorrection: {
-    mode: "levels",
-    levels: { inBlack: 0, gamma: 1, inWhite: 255, outBlack: 0, outWhite: 255 },
-    curves: {
-      points: [
-        { x: 0, y: 255 },
-        { x: 64, y: 192 },
-        { x: 128, y: 128 },
-        { x: 192, y: 64 },
-        { x: 255, y: 0 },
-      ],
-      dragging: -1,
-    },
-  },
-
-  bootstrapDirectionalRig: null,
-
   look: {
     smartStage: false,
     style: "warm",
@@ -188,6 +166,26 @@ const state = {
     useForLighting: true,
     quality: "medium",
     fileUrl: "",
+  },
+
+  colorCorrection: {
+    levels: { inBlack: 0, gamma: 1, inWhite: 255, outBlack: 0, outWhite: 255 },
+    graphDrag: null,
+  },
+
+  focusPick: {
+    active: false,
+  },
+
+  imageLabel: {
+    enabled: false,
+    editing: false,
+    position: { x: 0.5, y: 0.9 },
+    scale: 0.065,
+    color: "#FFFFFF",
+    text: "angle placeholder",
+    dragStart: null,
+    scaleStart: null,
   },
 
   objects: [],
@@ -297,144 +295,6 @@ function cloneCanvasWithFilter(canvas, filter) {
   return out;
 }
 
-function combineCssFilters(...filters) {
-  return filters.filter((v) => !!v && v !== "none").join(" ") || "none";
-}
-
-function getInputColorProfile(space = getColorPipelineConfig().input || "srgb") {
-  switch (space) {
-    case "linear":
-      return { cssFilter: "brightness(0.99) contrast(0.97)", canvasFilter: "brightness(99%) contrast(97%)" };
-    case "aces":
-      return { cssFilter: "contrast(1.03) saturate(1.02)", canvasFilter: "contrast(103%) saturate(102%)" };
-    case "agx":
-      return { cssFilter: "contrast(0.98) saturate(0.96)", canvasFilter: "contrast(98%) saturate(96%)" };
-    case "rec709":
-      return { cssFilter: "contrast(1.01) saturate(0.99)", canvasFilter: "contrast(101%) saturate(99%)" };
-    case "displayp3":
-      return { cssFilter: "saturate(1.08)", canvasFilter: "saturate(108%)" };
-    case "log":
-      return { cssFilter: "contrast(0.84) brightness(1.07) saturate(0.92)", canvasFilter: "contrast(84%) brightness(107%) saturate(92%)" };
-    case "raw":
-      return { cssFilter: "contrast(0.95) brightness(1.01)", canvasFilter: "contrast(95%) brightness(101%)" };
-    case "srgb":
-    default:
-      return { cssFilter: "none", canvasFilter: "none" };
-  }
-}
-
-function getColorCorrectionConfig() {
-  return {
-    mode: state.colorCorrection.mode,
-    levels: { ...state.colorCorrection.levels },
-    curves: {
-      points: state.colorCorrection.curves.points.map((p) => ({ x: p.x, y: p.y })),
-    },
-  };
-}
-
-function buildLevelsLUT(levels = state.colorCorrection.levels) {
-  const inBlack = THREE.MathUtils.clamp(Number(levels.inBlack ?? 0), 0, 254);
-  const inWhite = THREE.MathUtils.clamp(Number(levels.inWhite ?? 255), inBlack + 1, 255);
-  const gamma = THREE.MathUtils.clamp(Number(levels.gamma ?? 1), 0.1, 3.0);
-  const outBlack = THREE.MathUtils.clamp(Number(levels.outBlack ?? 0), 0, 254);
-  const outWhite = THREE.MathUtils.clamp(Number(levels.outWhite ?? 255), outBlack + 1, 255);
-  const lut = new Uint8ClampedArray(256);
-  for (let i = 0; i < 256; i++) {
-    let v = (i - inBlack) / Math.max(1, inWhite - inBlack);
-    v = THREE.MathUtils.clamp(v, 0, 1);
-    v = Math.pow(v, 1 / gamma);
-    const out = outBlack + v * (outWhite - outBlack);
-    lut[i] = Math.round(THREE.MathUtils.clamp(out, 0, 255));
-  }
-  return lut;
-}
-
-function getSortedCurvePoints() {
-  return state.colorCorrection.curves.points
-    .map((p) => ({ x: THREE.MathUtils.clamp(Number(p.x), 0, 255), y: THREE.MathUtils.clamp(Number(p.y), 0, 255) }))
-    .sort((a, b) => a.x - b.x);
-}
-
-function buildCurvesLUT(points = getSortedCurvePoints()) {
-  const lut = new Uint8ClampedArray(256);
-  const pts = points.slice().sort((a, b) => a.x - b.x);
-  for (let i = 0; i < pts.length - 1; i++) {
-    const a = pts[i];
-    const b = pts[i + 1];
-    const span = Math.max(1, b.x - a.x);
-    for (let x = a.x; x <= b.x; x++) {
-      const t = (x - a.x) / span;
-      const y = THREE.MathUtils.lerp(a.y, b.y, t);
-      lut[x] = Math.round(THREE.MathUtils.clamp(255 - y, 0, 255));
-    }
-  }
-  for (let x = 0; x < pts[0].x; x++) lut[x] = Math.round(THREE.MathUtils.clamp(255 - pts[0].y, 0, 255));
-  for (let x = pts[pts.length - 1].x; x < 256; x++) lut[x] = Math.round(THREE.MathUtils.clamp(255 - pts[pts.length - 1].y, 0, 255));
-  return lut;
-}
-
-function applyLUTToImageData(imageData, lut) {
-  const data = imageData.data;
-  for (let i = 0; i < data.length; i += 4) {
-    data[i] = lut[data[i]];
-    data[i + 1] = lut[data[i + 1]];
-    data[i + 2] = lut[data[i + 2]];
-  }
-  return imageData;
-}
-
-function applyPixelLUT(canvas, lut) {
-  if (!canvas || !lut) return canvas;
-  const out = document.createElement("canvas");
-  out.width = canvas.width;
-  out.height = canvas.height;
-  const ctx = make2DContext(out);
-  if (!ctx) return canvas;
-  ctx.drawImage(canvas, 0, 0);
-  const imageData = ctx.getImageData(0, 0, out.width, out.height);
-  ctx.putImageData(applyLUTToImageData(imageData, lut), 0, 0);
-  return out;
-}
-
-function isNeutralColorCorrection() {
-  if (state.colorCorrection.mode === "levels") {
-    const l = state.colorCorrection.levels;
-    return Number(l.inBlack) === 0 && Number(l.gamma) === 1 && Number(l.inWhite) === 255 && Number(l.outBlack) === 0 && Number(l.outWhite) === 255;
-  }
-  const pts = getSortedCurvePoints();
-  const defaults = [0, 64, 128, 192, 255];
-  return pts.every((p, i) => Math.round(p.x) === defaults[i] && Math.round(p.y) === 255 - defaults[i]);
-}
-
-function applyColorCorrection(canvas) {
-  if (!canvas || isNeutralColorCorrection()) return canvas;
-  if (state.colorCorrection.mode === "curves") return applyPixelLUT(canvas, buildCurvesLUT());
-  return applyPixelLUT(canvas, buildLevelsLUT());
-}
-
-function getApproxViewportCorrectionFilter() {
-  if (state.colorCorrection.mode === "levels") {
-    const levels = state.colorCorrection.levels;
-    const inputSpan = Math.max(1, Number(levels.inWhite) - Number(levels.inBlack));
-    const outputSpan = Math.max(1, Number(levels.outWhite) - Number(levels.outBlack));
-    const contrast = THREE.MathUtils.clamp(outputSpan / inputSpan, 0.7, 1.6);
-    const lift = ((Number(levels.outBlack) - Number(levels.inBlack)) / 255) * 0.45;
-    const gain = ((Number(levels.outWhite) - Number(levels.inWhite)) / 255) * 0.35;
-    const brightness = THREE.MathUtils.clamp(1 + lift + gain, 0.78, 1.22);
-    const gamma = THREE.MathUtils.clamp(Number(levels.gamma || 1), 0.5, 2.0);
-    const gammaBoost = gamma < 1 ? 1 + (1 - gamma) * 0.18 : 1 - (gamma - 1) * 0.08;
-    return combineCssFilters(`brightness(${brightness.toFixed(3)})`, `contrast(${contrast.toFixed(3)})`, `saturate(${gammaBoost.toFixed(3)})`);
-  }
-  const lut = buildCurvesLUT();
-  const black = lut[0] / 255;
-  const mid = lut[128] / 128;
-  const white = lut[255] / 255;
-  const contrast = THREE.MathUtils.clamp((white - black) + 0.65, 0.75, 1.45);
-  const brightness = THREE.MathUtils.clamp(0.92 + (mid - 1) * 0.35 + (black * 0.08), 0.8, 1.18);
-  return combineCssFilters(`brightness(${brightness.toFixed(3)})`, `contrast(${contrast.toFixed(3)})`);
-}
-
 function syncBasicColorToAdvanced() {
   const basic = $("colorSpaceBasic")?.value || "srgb";
   if ($("inputColorSpace")) $("inputColorSpace").value = basic;
@@ -453,15 +313,203 @@ function refreshColorModeUI() {
   if (basicWrap) basicWrap.style.display = advanced ? "none" : "block";
 }
 
+function clampLevelsConfig(cfg) {
+  const out = { ...cfg };
+  out.inBlack = THREE.MathUtils.clamp(Math.round(Number(out.inBlack ?? 0)), 0, 254);
+  out.inWhite = THREE.MathUtils.clamp(Math.round(Number(out.inWhite ?? 255)), out.inBlack + 1, 255);
+  out.gamma = THREE.MathUtils.clamp(Number(out.gamma ?? 1), 0.1, 5);
+  out.outBlack = THREE.MathUtils.clamp(Math.round(Number(out.outBlack ?? 0)), 0, 254);
+  out.outWhite = THREE.MathUtils.clamp(Math.round(Number(out.outWhite ?? 255)), out.outBlack + 1, 255);
+  return out;
+}
+
+function getLevelsConfig() {
+  return clampLevelsConfig({
+    inBlack: $("levelsInBlack")?.value ?? state.colorCorrection.levels.inBlack,
+    gamma: $("levelsGamma")?.value ?? state.colorCorrection.levels.gamma,
+    inWhite: $("levelsInWhite")?.value ?? state.colorCorrection.levels.inWhite,
+    outBlack: $("levelsOutBlack")?.value ?? state.colorCorrection.levels.outBlack,
+    outWhite: $("levelsOutWhite")?.value ?? state.colorCorrection.levels.outWhite,
+  });
+}
+
+function syncLevelsUI(cfg = getLevelsConfig()) {
+  state.colorCorrection.levels = { ...cfg };
+  if ($("levelsInBlack")) $("levelsInBlack").value = String(cfg.inBlack);
+  if ($("levelsInBlackVal")) $("levelsInBlackVal").value = String(cfg.inBlack);
+  const gammaStr = Number(cfg.gamma).toFixed(2).replace(/\.00$/, '');
+  if ($("levelsGamma")) $("levelsGamma").value = gammaStr;
+  if ($("levelsGammaVal")) $("levelsGammaVal").value = gammaStr;
+  if ($("levelsInWhite")) $("levelsInWhite").value = String(cfg.inWhite);
+  if ($("levelsInWhiteVal")) $("levelsInWhiteVal").value = String(cfg.inWhite);
+  if ($("levelsOutBlack")) $("levelsOutBlack").value = String(cfg.outBlack);
+  if ($("levelsOutBlackVal")) $("levelsOutBlackVal").value = String(cfg.outBlack);
+  if ($("levelsOutWhite")) $("levelsOutWhite").value = String(cfg.outWhite);
+  if ($("levelsOutWhiteVal")) $("levelsOutWhiteVal").value = String(cfg.outWhite);
+  syncLevelsGraphUI(cfg);
+}
+
+function setLevelsGraphMarker(id, xNorm, row = 'input', label = '') {
+  const el = $(id);
+  if (!el) return;
+  const clamped = THREE.MathUtils.clamp(xNorm, 0, 1);
+  el.style.left = `${(clamped * 100).toFixed(3)}%`;
+  if (label) el.textContent = label;
+}
+
+function syncLevelsGraphUI(cfg = getLevelsConfig()) {
+  const inBlackNorm = cfg.inBlack / 255;
+  const inWhiteNorm = cfg.inWhite / 255;
+  const outBlackNorm = cfg.outBlack / 255;
+  const outWhiteNorm = cfg.outWhite / 255;
+  const gammaT = THREE.MathUtils.clamp(Math.pow(0.5, cfg.gamma), 0.01, 0.99);
+  const gammaNorm = THREE.MathUtils.lerp(inBlackNorm, inWhiteNorm, gammaT);
+  setLevelsGraphMarker('levelsGraphInBlackPin', inBlackNorm);
+  setLevelsGraphMarker('levelsGraphGammaPin', gammaNorm);
+  setLevelsGraphMarker('levelsGraphInWhitePin', inWhiteNorm);
+  setLevelsGraphMarker('levelsGraphOutBlackPin', outBlackNorm);
+  setLevelsGraphMarker('levelsGraphOutWhitePin', outWhiteNorm);
+  setLevelsGraphMarker('levelsGraphInBlackLabel', inBlackNorm, 'input', `In B ${cfg.inBlack}`);
+  setLevelsGraphMarker('levelsGraphGammaLabel', gammaNorm, 'input', `Gamma ${Number(cfg.gamma).toFixed(2)}`);
+  setLevelsGraphMarker('levelsGraphInWhiteLabel', inWhiteNorm, 'input', `In W ${cfg.inWhite}`);
+  setLevelsGraphMarker('levelsGraphOutBlackLabel', outBlackNorm, 'output', `Out B ${cfg.outBlack}`);
+  setLevelsGraphMarker('levelsGraphOutWhiteLabel', outWhiteNorm, 'output', `Out W ${cfg.outWhite}`);
+  ['levelsGraphInputBlackLine','levelsGraphGammaLine','levelsGraphInputWhiteLine'].forEach((id, index) => {
+    const positions = [inBlackNorm, gammaNorm, inWhiteNorm];
+    const el = $(id);
+    if (el) el.style.left = `${(positions[index] * 100).toFixed(3)}%`;
+  });
+  ['levelsGraphOutputBlackLine','levelsGraphOutputWhiteLine'].forEach((id, index) => {
+    const positions = [outBlackNorm, outWhiteNorm];
+    const el = $(id);
+    if (el) el.style.left = `${(positions[index] * 100).toFixed(3)}%`;
+  });
+}
+
+function updateLevelsFromGraphPointer(clientX, clientY, pinType = state.colorCorrection.graphDrag) {
+  const bar = $('levelsGraphBar');
+  if (!bar || !pinType) return;
+  const rect = bar.getBoundingClientRect();
+  const norm = THREE.MathUtils.clamp((clientX - rect.left) / Math.max(1, rect.width), 0, 1);
+  const cfg = getLevelsConfig();
+  if (pinType === 'inBlack') cfg.inBlack = Math.round(norm * 255);
+  else if (pinType === 'inWhite') cfg.inWhite = Math.round(norm * 255);
+  else if (pinType === 'outBlack') cfg.outBlack = Math.round(norm * 255);
+  else if (pinType === 'outWhite') cfg.outWhite = Math.round(norm * 255);
+  else if (pinType === 'gamma') {
+    const blackNorm = cfg.inBlack / 255;
+    const whiteNorm = cfg.inWhite / 255;
+    const usable = Math.max(0.01, whiteNorm - blackNorm);
+    const localT = THREE.MathUtils.clamp((norm - blackNorm) / usable, 0.01, 0.99);
+    cfg.gamma = THREE.MathUtils.clamp(Math.log(localT) / Math.log(0.5), 0.1, 5);
+  }
+  const clamped = clampLevelsConfig(cfg);
+  syncLevelsUI(clamped);
+  updateDisplayColorPipeline();
+  copyMainCameraToPreview();
+}
+
+function onLevelsGraphPointerDown(e) {
+  const bar = $('levelsGraphBar');
+  if (!bar) return;
+  const handle = e.target.closest?.('[data-level-pin]');
+  const rect = bar.getBoundingClientRect();
+  const xNorm = THREE.MathUtils.clamp((e.clientX - rect.left) / Math.max(1, rect.width), 0, 1);
+  const yNorm = THREE.MathUtils.clamp((e.clientY - rect.top) / Math.max(1, rect.height), 0, 1);
+  if (handle?.dataset?.levelPin) {
+    state.colorCorrection.graphDrag = handle.dataset.levelPin;
+  } else {
+    const cfg = getLevelsConfig();
+    const blackNorm = cfg.inBlack / 255;
+    const whiteNorm = cfg.inWhite / 255;
+    const gammaNorm = THREE.MathUtils.lerp(blackNorm, whiteNorm, THREE.MathUtils.clamp(Math.pow(0.5, cfg.gamma), 0.01, 0.99));
+    const candidates = yNorm < 0.5
+      ? [['outBlack', cfg.outBlack / 255], ['outWhite', cfg.outWhite / 255]]
+      : [['inBlack', blackNorm], ['gamma', gammaNorm], ['inWhite', whiteNorm]];
+    candidates.sort((a, b) => Math.abs(a[1] - xNorm) - Math.abs(b[1] - xNorm));
+    state.colorCorrection.graphDrag = candidates[0]?.[0] || null;
+  }
+  if (!state.colorCorrection.graphDrag) return;
+  bar.setPointerCapture?.(e.pointerId);
+  updateLevelsFromGraphPointer(e.clientX, e.clientY, state.colorCorrection.graphDrag);
+  e.preventDefault();
+}
+
+function onLevelsGraphPointerMove(e) {
+  if (!state.colorCorrection.graphDrag) return;
+  updateLevelsFromGraphPointer(e.clientX, e.clientY, state.colorCorrection.graphDrag);
+}
+
+function onLevelsGraphPointerUp(e) {
+  const bar = $('levelsGraphBar');
+  if (bar && state.colorCorrection.graphDrag) bar.releasePointerCapture?.(e.pointerId);
+  state.colorCorrection.graphDrag = null;
+}
+
+function levelsAreDefault(cfg = getLevelsConfig()) {
+  return cfg.inBlack === 0 && cfg.gamma === 1 && cfg.inWhite === 255 && cfg.outBlack === 0 && cfg.outWhite === 255;
+}
+
+function buildLevelsCssFilter(cfg = getLevelsConfig()) {
+  if (levelsAreDefault(cfg)) return 'none';
+  const inputRange = Math.max(1, cfg.inWhite - cfg.inBlack);
+  const outputRange = Math.max(1, cfg.outWhite - cfg.outBlack);
+  const contrast = THREE.MathUtils.clamp((outputRange / inputRange) * 100, 20, 300);
+  const lift = THREE.MathUtils.clamp(100 + ((cfg.outBlack - cfg.inBlack) / 255) * 110, 20, 220);
+  const gammaBoost = THREE.MathUtils.clamp(Math.pow(1 / cfg.gamma, 0.4) * 100, 35, 220);
+  return `contrast(${contrast.toFixed(2)}%) brightness(${((lift * gammaBoost) / 100).toFixed(2)}%)`;
+}
+
+function applyLevelsToCanvas(canvas) {
+  const cfg = getLevelsConfig();
+  if (!canvas || levelsAreDefault(cfg)) return canvas;
+  const out = document.createElement('canvas');
+  out.width = canvas.width;
+  out.height = canvas.height;
+  const ctx = make2DContext(out);
+  const src = make2DContext(canvas);
+  if (!ctx || !src) return canvas;
+  const img = src.getImageData(0, 0, canvas.width, canvas.height);
+  const data = img.data;
+  const inputRange = Math.max(1, cfg.inWhite - cfg.inBlack);
+  const outputRange = Math.max(1, cfg.outWhite - cfg.outBlack);
+  const lut = new Uint8ClampedArray(256);
+  for (let i = 0; i < 256; i++) {
+    let n = (i - cfg.inBlack) / inputRange;
+    n = THREE.MathUtils.clamp(n, 0, 1);
+    n = Math.pow(n, 1 / cfg.gamma);
+    lut[i] = THREE.MathUtils.clamp(Math.round(cfg.outBlack + n * outputRange), 0, 255);
+  }
+  for (let i = 0; i < data.length; i += 4) {
+    data[i] = lut[data[i]];
+    data[i + 1] = lut[data[i + 1]];
+    data[i + 2] = lut[data[i + 2]];
+  }
+  ctx.putImageData(img, 0, 0);
+  return out;
+}
+
+function getRendererDisplayFilter() {
+  const cfg = getColorPipelineConfig();
+  const filters = [];
+  if (cfg.advanced) {
+    const inputFilter = getRendererColorProfile(cfg.input || 'srgb').cssFilter;
+    if (inputFilter && inputFilter !== 'none') filters.push(inputFilter);
+  }
+  const outputFilter = getRendererColorProfile(getActiveDisplayColorSpace()).cssFilter;
+  if (outputFilter && outputFilter !== 'none') filters.push(outputFilter);
+  const levelsFilter = buildLevelsCssFilter();
+  if (levelsFilter && levelsFilter !== 'none') filters.push(levelsFilter);
+  return filters.length ? filters.join(' ') : 'none';
+}
+
 function updateDisplayColorPipeline() {
   if (!state.renderer) return;
-  const cfg = getColorPipelineConfig();
-  const outputProfile = getRendererColorProfile(getActiveDisplayColorSpace());
-  const inputProfile = cfg.advanced ? getInputColorProfile(cfg.input || "srgb") : { cssFilter: "none", canvasFilter: "none" };
-  state.renderer.outputColorSpace = outputProfile.outputColorSpace;
-  state.renderer.toneMapping = outputProfile.toneMapping;
-  state.renderer.toneMappingExposure = outputProfile.exposure;
-  if (state.renderer.domElement) state.renderer.domElement.style.filter = combineCssFilters(inputProfile.cssFilter, outputProfile.cssFilter, getApproxViewportCorrectionFilter());
+  const profile = getRendererColorProfile(getActiveDisplayColorSpace());
+  state.renderer.outputColorSpace = profile.outputColorSpace;
+  state.renderer.toneMapping = profile.toneMapping;
+  state.renderer.toneMappingExposure = profile.exposure;
+  if (state.renderer.domElement) state.renderer.domElement.style.filter = getRendererDisplayFilter();
   state.preview.dirty = true;
 }
 
@@ -496,10 +544,10 @@ function applyLUTToCanvas(canvas, lutName) {
 function applyColorPipeline(canvas) {
   const cfg = getColorPipelineConfig();
   let out = canvas;
-  if (cfg.advanced) out = cloneCanvasWithFilter(out, getInputColorProfile(cfg.input || "srgb").canvasFilter);
+  if (cfg.advanced) out = cloneCanvasWithFilter(out, getRendererColorProfile(cfg.input || 'srgb').canvasFilter);
   out = cloneCanvasWithFilter(out, getRendererColorProfile(getActiveDisplayColorSpace()).canvasFilter);
   out = applyLUTToCanvas(out, cfg.advanced ? cfg.lut : 'standard');
-  out = applyColorCorrection(out);
+  out = applyLevelsToCanvas(out);
   return out;
 }
 
@@ -568,12 +616,15 @@ function updatePreviewShell() {
   if (!surface || !hint) return;
 
   const useHdriBg = $("hdriUseAsBg")?.checked && !!state.hdri.selectedUrl;
-  hint.textContent = useHdriBg ? "HDRI backdrop" : "Local polish only";
-  surface.style.background = useHdriBg
-    ? "rgba(8, 10, 14, 0.42)"
-    : "linear-gradient(180deg, rgba(255,255,255,0.05), rgba(255,255,255,0.02))";
-}
+  if (useHdriBg) {
+    hint.textContent = "HDRI backdrop";
+    surface.style.background = "rgba(8, 10, 14, 0.42)";
+    return;
+  }
 
+  hint.textContent = "Local polish only";
+  surface.style.background = "linear-gradient(180deg, rgba(255,255,255,0.05), rgba(255,255,255,0.02))";
+}
 
 function updateTransformSpaceButton() {
   const btn = $("spaceToggle");
@@ -653,6 +704,145 @@ function applyRoll(camera = state.camera, target = state.controls.target, rollDe
   camera.quaternion.multiply(TMP.q1);
 }
 
+
+function updateFocusPickButton() {
+  const btn = $("focusPickBtn");
+  if (!btn) return;
+  btn.classList.toggle('active', !!state.focusPick.active);
+  btn.textContent = state.focusPick.active ? '×' : '+';
+  btn.title = state.focusPick.active ? 'Cancel focus picking' : 'Click a point on the model to set perfect focus distance';
+}
+
+function setFocusDistanceFromWorldPoint(point) {
+  if (!point || !state.camera) return;
+  state.cameraRig.focusWorldPoint = point.clone();
+  state.cameraRig.focalDistance = THREE.MathUtils.clamp(state.camera.position.distanceTo(point), 0.2, 50);
+  state.camera.focus = state.cameraRig.focalDistance;
+  if ($("focalDistance")) $("focalDistance").value = state.cameraRig.focalDistance.toFixed(1);
+  if ($("focalDistanceVal")) $("focalDistanceVal").textContent = state.cameraRig.focalDistance.toFixed(1);
+  if (state.gsplat.sparkRenderer) state.gsplat.sparkRenderer.focalDistance = state.cameraRig.focalDistance;
+  copyMainCameraToPreview();
+}
+
+function toggleFocusPickMode(force = null) {
+  state.focusPick.active = force == null ? !state.focusPick.active : !!force;
+  updateFocusPickButton();
+  if (state.renderer?.domElement) state.renderer.domElement.style.cursor = state.focusPick.active ? 'crosshair' : '';
+}
+
+function collectModelPickTargets() {
+  const list = [];
+  if (state.root) {
+    state.root.traverse((o) => {
+      if (o.isMesh && o.visible) list.push(o);
+    });
+  }
+  return list;
+}
+
+function pickFocusPoint(clientX, clientY) {
+  if (!state.root) return false;
+  const rect = state.renderer.domElement.getBoundingClientRect();
+  state.pointer.x = ((clientX - rect.left) / rect.width) * 2 - 1;
+  state.pointer.y = -((clientY - rect.top) / rect.height) * 2 + 1;
+  state.raycaster.setFromCamera(state.pointer, state.camera);
+  const hits = state.raycaster.intersectObjects(collectModelPickTargets(), true);
+  if (!hits.length) {
+    log('Focus pick missed the model.');
+    toggleFocusPickMode(false);
+    return false;
+  }
+  setFocusDistanceFromWorldPoint(hits[0].point);
+  toggleFocusPickMode(false);
+  log(`Focus distance set to ${state.cameraRig.focalDistance.toFixed(2)} m.`);
+  return true;
+}
+
+function updateImageLabelGhost() {
+  const ghost = $("imageLabelGhost");
+  if (!ghost) return;
+  const label = state.imageLabel;
+  ghost.textContent = label.text || 'angle placeholder';
+  ghost.style.left = `${label.position.x * 100}%`;
+  ghost.style.top = `${label.position.y * 100}%`;
+  ghost.style.color = label.color || '#FFFFFF';
+  const view = $("view")?.getBoundingClientRect?.();
+  const fontPx = Math.max(14, Math.round((view?.height || 800) * label.scale));
+  ghost.style.fontSize = `${fontPx}px`;
+}
+
+function setImageLabelEnabled(enabled) {
+  state.imageLabel.enabled = !!enabled;
+  if ($("enableImageLabelling")) $("enableImageLabelling").checked = !!enabled;
+  state.preview.dirty = true;
+}
+
+function showImageLabelEditor(show) {
+  const overlay = $("imageLabelOverlay");
+  const ghost = $("imageLabelGhost");
+  if (overlay) overlay.style.display = show ? 'block' : 'none';
+  if (ghost) ghost.style.display = show ? 'block' : 'none';
+  updateImageLabelGhost();
+}
+
+function beginImageLabelMode() {
+  state.imageLabel.editing = true;
+  state.imageLabel.dragStart = null;
+  state.imageLabel.scaleStart = null;
+  if ($("imageLabelColor")) $("imageLabelColor").value = state.imageLabel.color || '#FFFFFF';
+  showImageLabelEditor(true);
+  if (state.renderer?.domElement) state.renderer.domElement.style.cursor = 'default';
+}
+
+function finishImageLabelMode(commit = true) {
+  state.imageLabel.editing = false;
+  state.imageLabel.dragStart = null;
+  state.imageLabel.scaleStart = null;
+  showImageLabelEditor(false);
+  setImageLabelEnabled(commit);
+}
+
+function startImageLabelWorkflow() {
+  beginImageLabelMode();
+}
+
+function updateImageLabelPositionFromPointer(clientX, clientY) {
+  const rect = $("view")?.getBoundingClientRect?.();
+  if (!rect) return;
+  state.imageLabel.position.x = THREE.MathUtils.clamp((clientX - rect.left) / Math.max(1, rect.width), 0.02, 0.98);
+  state.imageLabel.position.y = THREE.MathUtils.clamp((clientY - rect.top) / Math.max(1, rect.height), 0.02, 0.98);
+  updateImageLabelGhost();
+  state.preview.dirty = true;
+}
+
+function applyImageLabelToCanvas(sourceCanvas, labelText = 'capture') {
+  if (!state.imageLabel.enabled || !sourceCanvas) return sourceCanvas;
+  const out = document.createElement('canvas');
+  out.width = sourceCanvas.width;
+  out.height = sourceCanvas.height;
+  const ctx = make2DContext(out);
+  if (!ctx) return sourceCanvas;
+  ctx.drawImage(sourceCanvas, 0, 0);
+  const text = `${labelText || 'capture'}`;
+  const fontPx = Math.max(16, Math.round(sourceCanvas.height * THREE.MathUtils.clamp(state.imageLabel.scale || 0.065, 0.02, 0.25)));
+  const x = sourceCanvas.width * THREE.MathUtils.clamp(state.imageLabel.position.x || 0.5, 0, 1);
+  const y = sourceCanvas.height * THREE.MathUtils.clamp(state.imageLabel.position.y || 0.9, 0, 1);
+  ctx.save();
+  ctx.font = `700 ${fontPx}px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.lineJoin = 'round';
+  ctx.lineWidth = Math.max(2, fontPx * 0.08);
+  ctx.strokeStyle = 'rgba(0,0,0,0.45)';
+  ctx.shadowColor = 'rgba(0,0,0,0.35)';
+  ctx.shadowBlur = Math.max(4, fontPx * 0.12);
+  ctx.strokeText(text, x, y);
+  ctx.fillStyle = state.imageLabel.color || '#FFFFFF';
+  ctx.fillText(text, x, y);
+  ctx.restore();
+  return out;
+}
+
 function syncCameraUIFromView() {
   if (!state.camera) return;
   const { yaw, pitch } = getCameraAngles();
@@ -668,213 +858,6 @@ function syncCameraUIFromView() {
   if ($("blurScaleRatio")) $("blurScaleRatio").value = Number(state.cameraRig.blurScaleRatio || 1).toFixed(2);
   if ($("blurScaleRatioNum")) $("blurScaleRatioNum").value = Number(state.cameraRig.blurScaleRatio || 1).toFixed(2);
   applyLensSettings();
-}
-
-function getFocusWorldPoint() {
-  if (state.cameraRig.focusWorldPoint && state.cameraRig.focusWorldPoint.isVector3) return state.cameraRig.focusWorldPoint.clone();
-  if (Array.isArray(state.cameraRig.focusWorldPoint)) return new THREE.Vector3().fromArray(state.cameraRig.focusWorldPoint);
-  return state.controls?.target?.clone?.() || state.modelCenter.clone();
-}
-
-function updateFocusPickButton() {
-  const btn = $("pickFocusPoint");
-  if (!btn) return;
-  btn.classList.toggle("active", !!state.focusPick.active);
-  btn.textContent = state.focusPick.active ? "×" : "+";
-  btn.title = state.focusPick.active ? "Cancel focus picking" : "Pick a point on the model to set exact focus";
-}
-
-function setFocusDistanceMeters(value) {
-  state.cameraRig.focalDistance = THREE.MathUtils.clamp(Number(value || 6), 0.2, 50);
-  if ($("focalDistance")) $("focalDistance").value = state.cameraRig.focalDistance.toFixed(1);
-  if ($("focalDistanceVal")) $("focalDistanceVal").textContent = state.cameraRig.focalDistance.toFixed(1);
-  state.camera.focus = state.cameraRig.focalDistance;
-  if (state.gsplat.sparkRenderer) state.gsplat.sparkRenderer.focalDistance = state.cameraRig.focalDistance;
-  copyMainCameraToPreview();
-}
-
-function setFocusWorldPoint(point, syncDistance = true) {
-  if (!point) return;
-  state.cameraRig.focusWorldPoint = point.clone ? point.clone() : new THREE.Vector3().fromArray(point);
-  if (syncDistance && state.camera) setFocusDistanceMeters(state.camera.position.distanceTo(getFocusWorldPoint()));
-}
-
-function setFocusPickActive(active) {
-  state.focusPick.active = !!active;
-  updateFocusPickButton();
-  if (state.focusPick.active) {
-    setBadge("Click model point to set focus");
-  } else if (state.root) {
-    setBadge("Ready");
-  }
-}
-
-function pickFocusPointFromViewport(clientX, clientY) {
-  if (!state.root) return false;
-  const rect = state.renderer.domElement.getBoundingClientRect();
-  state.pointer.x = ((clientX - rect.left) / rect.width) * 2 - 1;
-  state.pointer.y = -((clientY - rect.top) / rect.height) * 2 + 1;
-  state.raycaster.setFromCamera(state.pointer, state.camera);
-  const targets = [];
-  state.root.traverse((o) => { if (o.isMesh && o.visible) targets.push(o); });
-  const hits = state.raycaster.intersectObjects(targets, true);
-  if (!hits.length) {
-    log("Focus pick missed the model.");
-    setFocusPickActive(false);
-    return true;
-  }
-  const hit = hits[0];
-  setFocusWorldPoint(hit.point, true);
-  setFocusPickActive(false);
-  log(`Focus distance set to ${state.cameraRig.focalDistance.toFixed(2)}m.`);
-  return true;
-}
-
-const CURVE_EDITOR = { x: 18, y: 18, w: 264, h: 204 };
-
-function curvePointToCanvas(point) {
-  return {
-    x: CURVE_EDITOR.x + (point.x / 255) * CURVE_EDITOR.w,
-    y: CURVE_EDITOR.y + (point.y / 255) * CURVE_EDITOR.h,
-  };
-}
-
-function curveCanvasToPoint(x, y, index) {
-  const prev = state.colorCorrection.curves.points[index - 1];
-  const next = state.colorCorrection.curves.points[index + 1];
-  const minX = prev ? prev.x + 8 : 0;
-  const maxX = next ? next.x - 8 : 255;
-  return {
-    x: THREE.MathUtils.clamp(((x - CURVE_EDITOR.x) / CURVE_EDITOR.w) * 255, minX, maxX),
-    y: THREE.MathUtils.clamp(((y - CURVE_EDITOR.y) / CURVE_EDITOR.h) * 255, 0, 255),
-  };
-}
-
-function renderCurveEditor() {
-  const canvas = $("curveEditorCanvas");
-  if (!canvas) return;
-  const ctx = make2DContext(canvas, { willReadFrequently: false });
-  if (!ctx) return;
-  const { width, height } = canvas;
-  ctx.clearRect(0, 0, width, height);
-  ctx.fillStyle = "rgba(13,18,28,0.95)";
-  ctx.fillRect(0, 0, width, height);
-  ctx.strokeStyle = "rgba(255,255,255,0.08)";
-  ctx.lineWidth = 1;
-  for (let i = 0; i <= 4; i++) {
-    const x = CURVE_EDITOR.x + (CURVE_EDITOR.w / 4) * i;
-    const y = CURVE_EDITOR.y + (CURVE_EDITOR.h / 4) * i;
-    ctx.beginPath(); ctx.moveTo(x, CURVE_EDITOR.y); ctx.lineTo(x, CURVE_EDITOR.y + CURVE_EDITOR.h); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(CURVE_EDITOR.x, y); ctx.lineTo(CURVE_EDITOR.x + CURVE_EDITOR.w, y); ctx.stroke();
-  }
-  ctx.strokeStyle = "rgba(255,255,255,0.16)";
-  ctx.strokeRect(CURVE_EDITOR.x, CURVE_EDITOR.y, CURVE_EDITOR.w, CURVE_EDITOR.h);
-
-  const points = getSortedCurvePoints();
-  ctx.strokeStyle = "#6ae2ff";
-  ctx.lineWidth = 2;
-  ctx.beginPath();
-  points.forEach((p, i) => {
-    const c = curvePointToCanvas(p);
-    if (i === 0) ctx.moveTo(c.x, c.y);
-    else ctx.lineTo(c.x, c.y);
-  });
-  ctx.stroke();
-
-  points.forEach((p, i) => {
-    const c = curvePointToCanvas(p);
-    ctx.fillStyle = i === 0 || i === points.length - 1 ? "#c6d4f4" : "#6ae2ff";
-    ctx.beginPath();
-    ctx.arc(c.x, c.y, 5.5, 0, Math.PI * 2);
-    ctx.fill();
-  });
-}
-
-function refreshColorCorrectionUI() {
-  const levels = state.colorCorrection.levels;
-  const bind = (a, b, val) => { if ($(a)) $(a).value = String(val); if ($(b)) $(b).value = String(val); };
-  bind("ccInputBlack", "ccInputBlackVal", levels.inBlack);
-  bind("ccGamma", "ccGammaVal", Number(levels.gamma).toFixed(2));
-  bind("ccInputWhite", "ccInputWhiteVal", levels.inWhite);
-  bind("ccOutputBlack", "ccOutputBlackVal", levels.outBlack);
-  bind("ccOutputWhite", "ccOutputWhiteVal", levels.outWhite);
-  $("ccTabLevels")?.classList.toggle("active", state.colorCorrection.mode === "levels");
-  $("ccTabCurves")?.classList.toggle("active", state.colorCorrection.mode === "curves");
-  $("ccLevelsPanel")?.classList.toggle("active", state.colorCorrection.mode === "levels");
-  $("ccCurvesPanel")?.classList.toggle("active", state.colorCorrection.mode === "curves");
-  renderCurveEditor();
-}
-
-function updateColorCorrection() {
-  updateDisplayColorPipeline();
-  renderCurveEditor();
-  copyMainCameraToPreview();
-}
-
-function resetColorCorrection() {
-  state.colorCorrection.mode = "levels";
-  state.colorCorrection.levels = { inBlack: 0, gamma: 1, inWhite: 255, outBlack: 0, outWhite: 255 };
-  state.colorCorrection.curves.points = [
-    { x: 0, y: 255 },
-    { x: 64, y: 192 },
-    { x: 128, y: 128 },
-    { x: 192, y: 64 },
-    { x: 255, y: 0 },
-  ];
-  state.colorCorrection.curves.dragging = -1;
-  refreshColorCorrectionUI();
-  updateColorCorrection();
-}
-
-function bindLevelsControl(rangeId, numId, key, parser = Number) {
-  const apply = (raw) => {
-    let v = parser(raw);
-    if (key === "inBlack") v = THREE.MathUtils.clamp(v, 0, state.colorCorrection.levels.inWhite - 1);
-    if (key === "inWhite") v = THREE.MathUtils.clamp(v, state.colorCorrection.levels.inBlack + 1, 255);
-    if (key === "outBlack") v = THREE.MathUtils.clamp(v, 0, state.colorCorrection.levels.outWhite - 1);
-    if (key === "outWhite") v = THREE.MathUtils.clamp(v, state.colorCorrection.levels.outBlack + 1, 255);
-    if (key === "gamma") v = THREE.MathUtils.clamp(v, 0.1, 3.0);
-    state.colorCorrection.levels[key] = v;
-    refreshColorCorrectionUI();
-    updateColorCorrection();
-  };
-  $(rangeId)?.addEventListener("input", () => apply($(rangeId).value));
-  $(numId)?.addEventListener("input", () => apply($(numId).value));
-}
-
-function wireCurveEditor() {
-  const canvas = $("curveEditorCanvas");
-  if (!canvas) return;
-  const getPos = (e) => {
-    const rect = canvas.getBoundingClientRect();
-    const sx = canvas.width / Math.max(1, rect.width);
-    const sy = canvas.height / Math.max(1, rect.height);
-    return { x: (e.clientX - rect.left) * sx, y: (e.clientY - rect.top) * sy };
-  };
-  canvas.addEventListener("pointerdown", (e) => {
-    const pos = getPos(e);
-    let best = -1;
-    let bestDist = 14;
-    state.colorCorrection.curves.points.forEach((p, idx) => {
-      if (idx === 0 || idx === state.colorCorrection.curves.points.length - 1) return;
-      const c = curvePointToCanvas(p);
-      const d = Math.hypot(pos.x - c.x, pos.y - c.y);
-      if (d < bestDist) { best = idx; bestDist = d; }
-    });
-    state.colorCorrection.curves.dragging = best;
-    if (best >= 0) canvas.setPointerCapture(e.pointerId);
-  });
-  canvas.addEventListener("pointermove", (e) => {
-    const idx = state.colorCorrection.curves.dragging;
-    if (idx < 0) return;
-    const pos = getPos(e);
-    state.colorCorrection.curves.points[idx] = curveCanvasToPoint(pos.x, pos.y, idx);
-    renderCurveEditor();
-    updateColorCorrection();
-  });
-  const release = () => { state.colorCorrection.curves.dragging = -1; };
-  canvas.addEventListener("pointerup", release);
-  canvas.addEventListener("pointercancel", release);
 }
 
 function setOrbitAngles(yawDeg, pitchDeg) {
@@ -898,11 +881,6 @@ function saveCurrentView() {
     quat: state.camera.quaternion.toArray(),
     target: state.controls.target.toArray(),
     focalLength: state.cameraRig.focalLength,
-    apertureF: state.cameraRig.apertureF,
-    focalDistance: state.cameraRig.focalDistance,
-    blurScaleRatio: state.cameraRig.blurScaleRatio,
-    dofEnabled: state.cameraRig.dofEnabled,
-    focusWorldPoint: getFocusWorldPoint().toArray(),
     sensorPreset: state.cameraRig.sensorPreset,
     sensorWidth: state.cameraRig.sensorWidth,
     sensorHeight: state.cameraRig.sensorHeight,
@@ -915,11 +893,6 @@ function setCameraToSavedView(view) {
   state.cameraRig.sensorWidth = view.sensorWidth || state.cameraRig.sensorWidth;
   state.cameraRig.sensorHeight = view.sensorHeight || state.cameraRig.sensorHeight;
   state.cameraRig.focalLength = view.focalLength ?? state.cameraRig.focalLength;
-  state.cameraRig.apertureF = view.apertureF ?? state.cameraRig.apertureF;
-  state.cameraRig.focalDistance = view.focalDistance ?? state.cameraRig.focalDistance;
-  state.cameraRig.blurScaleRatio = view.blurScaleRatio ?? state.cameraRig.blurScaleRatio;
-  state.cameraRig.dofEnabled = view.dofEnabled ?? state.cameraRig.dofEnabled;
-  state.cameraRig.focusWorldPoint = Array.isArray(view.focusWorldPoint) ? new THREE.Vector3().fromArray(view.focusWorldPoint) : state.cameraRig.focusWorldPoint;
   state.cameraRig.rollDeg = view.rollDeg ?? state.cameraRig.rollDeg;
   applyLensSettings();
 
@@ -951,7 +924,7 @@ function applyBackground() {
 function setupLights() {
   const toRemove = [];
   state.scene.traverse((o) => {
-    if (o.userData && o.userData.appLight && !o.userData.internalLight && o !== state.helix.light) toRemove.push(o);
+    if (o.userData && o.userData.appLight && o !== state.helix.light) toRemove.push(o);
   });
   toRemove.forEach((o) => state.scene.remove(o));
 
@@ -1143,7 +1116,7 @@ async function renderPreview() {
     const previewW = Math.max(2, state.preview.canvas.width);
     const previewH = Math.max(2, state.preview.canvas.height);
     const viewportDims = getViewportFrameDims(Math.max(640, Math.max(previewW, previewH) * 1.75));
-    const frame = await renderStyledStillCanvas(viewportDims, true);
+    const frame = await renderStyledStillCanvas(viewportDims, true, state.imageLabel.enabled ? (state.imageLabel.text || 'angle placeholder') : 'preview');
     const ctx = state.preview.ctx;
     if (!ctx) throw new Error("Preview canvas 2D context unavailable.");
     ctx.clearRect(0, 0, previewW, previewH);
@@ -1184,6 +1157,9 @@ function setOverlayObjectsVisible(visible) {
   const overlays = [];
   if (state.transformHelper) overlays.push(state.transformHelper);
   if (state.helix.helper) overlays.push(state.helix.helper);
+  state.lights.rigs.forEach((rig) => {
+    if (rig.helper) overlays.push(rig.helper);
+  });
   overlays.forEach((obj) => {
     restore.push([obj, obj.visible]);
     obj.visible = visible && obj.visible;
@@ -1264,6 +1240,9 @@ function init3D() {
     if (state.selection.type === "sceneLight") {
       syncSelectedSceneLightFromTransform();
     }
+    if (state.selection.type === "model" || state.selection.type === "floor") {
+      updateAmbientOcclusionOverlay();
+    }
     state.ui.cameraSyncPending = true;
   });
   transformHelper.traverse?.((child) => {
@@ -1278,6 +1257,18 @@ function init3D() {
   scene.add(transformHelper);
 
   scene.add(new THREE.AmbientLight(0xffffff, 0.35));
+
+  const bootstrapDirectional = new THREE.DirectionalLight(0xffffff, 0);
+  bootstrapDirectional.name = 'Bootstrap Directional';
+  bootstrapDirectional.position.set(4, 6, 3);
+  bootstrapDirectional.castShadow = true;
+  bootstrapDirectional.shadow.mapSize.set(1024, 1024);
+  bootstrapDirectional.shadow.bias = -0.0002;
+  bootstrapDirectional.shadow.normalBias = 0.02;
+  bootstrapDirectional.userData.bootstrapHidden = true;
+  scene.add(bootstrapDirectional);
+  state.bootstrapDirectionalRig = bootstrapDirectional;
+
   RectAreaLightUniformsLib.init();
 
   const helixLight = new THREE.RectAreaLight(0xffffff, state.helix.intensity, 1.0, 1.0);
@@ -1335,12 +1326,17 @@ function init3D() {
     camera.updateProjectionMatrix();
     updatePreviewFrameAspect();
     updatePreviewSize();
+    updateImageLabelGhost();
   };
   window.addEventListener("resize", onResize);
   onResize();
 
   renderer.domElement.addEventListener("pointerdown", onViewportPointerDown);
   renderer.domElement.addEventListener("pointerup", onViewportPointerUp);
+  window.addEventListener("pointermove", onViewportPointerMove);
+  window.addEventListener("pointerup", onViewportPointerUp);
+  $("imageLabelGhost")?.addEventListener("pointerdown", onViewportPointerDown);
+  $("imageLabelScaleHandle")?.addEventListener("pointerdown", onViewportPointerDown);
 
   const tick = () => {
     requestAnimationFrame(tick);
@@ -1362,7 +1358,6 @@ function init3D() {
   tick();
 
   setupLights();
-  spawnBootstrapDirectionalLight();
   applyBackground();
   updateDisplayColorPipeline();
   updatePreviewShell();
@@ -1380,13 +1375,17 @@ function renderMain() {
 }
 
 function computeLiveModelBounds() {
-  if (!state.root) return;
+  if (!state.root) {
+    updateAmbientOcclusionOverlay();
+    return;
+  }
   const box = new THREE.Box3().setFromObject(state.root);
   const sphere = new THREE.Sphere();
   box.getBoundingSphere(sphere);
   state.modelCenter.copy(sphere.center);
   state.modelRadius = Math.max(0.01, sphere.radius);
   if (!state.helix.manual) setHelixLightPose(0);
+  updateAmbientOcclusionOverlay();
 }
 
 function disposeMaterial(mat) {
@@ -1410,9 +1409,8 @@ function clearModel() {
   state.poi.list = [];
   state.poi.active = false;
   state.poi.currentObjectId = null;
-  state.cameraRig.focusWorldPoint = null;
-  setFocusPickActive(false);
   clearSelection();
+  updateAmbientOcclusionOverlay();
   renderPOIList();
   buildObjectList();
   updateFloorButton();
@@ -1486,6 +1484,7 @@ function fitCameraToRoot(root, preserveDirection = false) {
   syncCameraUIFromView();
   if (!state.helix.manual) setHelixLightPose(0);
   updateHelixShadowLight();
+  updateAmbientOcclusionOverlay();
 
   log("View recentered.");
 }
@@ -1495,22 +1494,96 @@ function resetView() {
   setCameraToSavedView(state.baseView);
   if (!state.helix.manual) setHelixLightPose(0);
   updateHelixShadowLight();
+  updateAmbientOcclusionOverlay();
   log("View reset.");
 }
 
 function onViewportPointerDown(e) {
-  state.selection.pointerDown = { x: e.clientX, y: e.clientY };
+  const ghost = $("imageLabelGhost");
+  const scaleHandle = $("imageLabelScaleHandle");
+  const target = e.target;
+  const onScaleHandle = !!(state.imageLabel.editing && scaleHandle && (target === scaleHandle || scaleHandle.contains?.(target)));
+  const onGhost = !!(state.imageLabel.editing && ghost && (target === ghost || ghost.contains?.(target)));
+
+  if (onScaleHandle) {
+    const rect = $("view")?.getBoundingClientRect?.();
+    if (rect) {
+      const centerX = rect.left + rect.width * THREE.MathUtils.clamp(state.imageLabel.position.x || 0.5, 0, 1);
+      const centerY = rect.top + rect.height * THREE.MathUtils.clamp(state.imageLabel.position.y || 0.9, 0, 1);
+      state.imageLabel.scaleStart = {
+        centerX,
+        centerY,
+        startDist: Math.max(12, Math.hypot(e.clientX - centerX, e.clientY - centerY)),
+        startScale: state.imageLabel.scale || 0.065,
+      };
+    }
+    state.selection.pointerDown = { x: e.clientX, y: e.clientY, kind: "imageLabelScale" };
+    e.preventDefault();
+    return;
+  }
+
+  if (onGhost) {
+    state.imageLabel.dragStart = {
+      x: e.clientX,
+      y: e.clientY,
+      positionX: state.imageLabel.position.x,
+      positionY: state.imageLabel.position.y,
+    };
+    state.selection.pointerDown = { x: e.clientX, y: e.clientY, kind: "imageLabelDrag" };
+    e.preventDefault();
+    return;
+  }
+
+  state.selection.pointerDown = { x: e.clientX, y: e.clientY, kind: "viewport" };
+}
+
+function onViewportPointerMove(e) {
+  if (state.imageLabel.editing && state.imageLabel.dragStart) {
+    const rect = $("view")?.getBoundingClientRect?.();
+    if (!rect) return;
+    const dx = (e.clientX - state.imageLabel.dragStart.x) / Math.max(1, rect.width);
+    const dy = (e.clientY - state.imageLabel.dragStart.y) / Math.max(1, rect.height);
+    state.imageLabel.position.x = THREE.MathUtils.clamp(state.imageLabel.dragStart.positionX + dx, 0.02, 0.98);
+    state.imageLabel.position.y = THREE.MathUtils.clamp(state.imageLabel.dragStart.positionY + dy, 0.02, 0.98);
+    updateImageLabelGhost();
+    state.preview.dirty = true;
+    return;
+  }
+
+  if (state.imageLabel.editing && state.imageLabel.scaleStart) {
+    const start = state.imageLabel.scaleStart;
+    const dist = Math.max(12, Math.hypot(e.clientX - start.centerX, e.clientY - start.centerY));
+    const ratio = dist / Math.max(12, start.startDist);
+    state.imageLabel.scale = THREE.MathUtils.clamp(start.startScale * ratio, 0.02, 0.25);
+    updateImageLabelGhost();
+    state.preview.dirty = true;
+    return;
+  }
 }
 
 function onViewportPointerUp(e) {
-  if (state.transformControls.dragging || state.selection.interactingTransform) return;
+  const wasImageLabelDrag = !!state.imageLabel.dragStart;
+  const wasImageLabelScale = !!state.imageLabel.scaleStart;
+  state.imageLabel.dragStart = null;
+  state.imageLabel.scaleStart = null;
+
+  if (wasImageLabelDrag || wasImageLabelScale) {
+    state.selection.pointerDown = null;
+    return;
+  }
+
+  if (state.transformControls.dragging || state.selection.interactingTransform) {
+    state.selection.pointerDown = null;
+    return;
+  }
   const p = state.selection.pointerDown;
-  if (!p) return;
+  state.selection.pointerDown = null;
+  if (!p || p.kind !== "viewport") return;
   const dx = e.clientX - p.x;
   const dy = e.clientY - p.y;
   if (Math.hypot(dx, dy) > 4) return;
   if (state.focusPick.active) {
-    pickFocusPointFromViewport(e.clientX, e.clientY);
+    pickFocusPoint(e.clientX, e.clientY);
     return;
   }
   pickSelectable(e.clientX, e.clientY);
@@ -1623,6 +1696,8 @@ function lightWattsToIntensity(type, watts) {
 function createGenericLightHelper(type, color = 0xffffff) {
   const group = new THREE.Group();
   group.name = `${type} helper`;
+  group.visible = true;
+  group.userData.isLightFixture = true;
   const lineMat = new THREE.LineBasicMaterial({ color, depthTest: false, transparent: true, opacity: 0.9 });
   if (type === 'rectarea') {
     const pts = [new THREE.Vector3(-0.5,0.3,0), new THREE.Vector3(0.5,0.3,0), new THREE.Vector3(0.5,-0.3,0), new THREE.Vector3(-0.5,-0.3,0), new THREE.Vector3(-0.5,0.3,0)];
@@ -1649,38 +1724,10 @@ function getSpawnPointAboveModel() {
   return c.add(new THREE.Vector3(0, r * 1.8, r * 1.2));
 }
 
-function configureLightShadowDefaults(light, type) {
-  if (!light || !light.shadow) return;
-  const radius = Math.max(1, state.modelRadius || 1);
-  if (type === 'directional') {
-    light.shadow.mapSize.set(2048, 2048);
-    light.shadow.camera.near = 0.1;
-    light.shadow.camera.far = Math.max(40, radius * 18);
-    light.shadow.camera.left = -radius * 4;
-    light.shadow.camera.right = radius * 4;
-    light.shadow.camera.top = radius * 4;
-    light.shadow.camera.bottom = -radius * 4;
-    light.shadow.bias = -0.00015;
-    light.shadow.normalBias = 0.04;
-    light.shadow.radius = 1.2;
-  } else if (type === 'spot') {
-    light.shadow.mapSize.set(2048, 2048);
-    light.shadow.bias = -0.00012;
-    light.shadow.normalBias = 0.02;
-    light.shadow.radius = 1.5;
-  } else if (type === 'point') {
-    light.shadow.mapSize.set(1024, 1024);
-    light.shadow.bias = -0.0001;
-    light.shadow.normalBias = 0.015;
-    light.shadow.radius = 1.2;
-  }
-}
-
 function buildLightRig(type, existing = null) {
   const rig = existing || { id: `light_${state.lights.nextId++}` };
   rig.type = type;
-  rig.internal = !!existing?.internal;
-  rig.name = rig.internal && existing?.name ? existing.name : `${type[0].toUpperCase()}${type.slice(1)} Light`; 
+  rig.name = `${type[0].toUpperCase()}${type.slice(1)} Light`;
   const watts = existing?.watts ?? 1000;
   const color = existing?.color ?? '#FFFFFF';
   const size = existing?.size ?? 1;
@@ -1692,65 +1739,34 @@ function buildLightRig(type, existing = null) {
   const group = new THREE.Group();
   group.position.copy(position); group.quaternion.copy(quaternion);
   group.name = rig.name;
-  group.userData.sceneLight = !rig.internal;
+  group.userData.sceneLight = true;
   group.userData.lightRigId = rig.id;
-  group.userData.internalLight = rig.internal;
   const clr = new THREE.Color(color);
   let light = null;
   if (type === 'directional') {
     light = new THREE.DirectionalLight(clr, lightWattsToIntensity(type, watts));
     const target = new THREE.Object3D(); target.position.set(0, -1, 0); group.add(target); light.target = target;
-    light.castShadow = shadows;
-    configureLightShadowDefaults(light, type);
+    light.castShadow = shadows; light.shadow.mapSize.set(2048,2048); light.shadow.camera.near = 0.1; light.shadow.camera.far = 100;
   } else if (type === 'spot') {
     light = new THREE.SpotLight(clr, lightWattsToIntensity(type, watts), radius || 0, Math.PI/6, 0.25, 2);
     const target = new THREE.Object3D(); target.position.set(0, -1, 0); group.add(target); light.target = target; light.castShadow = shadows;
-    configureLightShadowDefaults(light, type);
   } else if (type === 'point') {
     light = new THREE.PointLight(clr, lightWattsToIntensity(type, watts), radius || 0, 2); light.castShadow = shadows;
-    configureLightShadowDefaults(light, type);
   } else if (type === 'rectarea' || type === 'helix') {
     light = new THREE.RectAreaLight(clr, lightWattsToIntensity(type, watts), Math.max(0.1,size), Math.max(0.1,size));
   } else if (type === 'hemisphere') {
     light = new THREE.HemisphereLight(clr, 0x202020, lightWattsToIntensity(type, watts));
   }
   light.userData.appLight = true;
-  light.userData.internalLight = rig.internal;
   light.position.set(0,0,0);
   group.add(light);
   const helper = createGenericLightHelper(type, clr);
-  helper.visible = !rig.internal;
-  helper.userData.internalLight = rig.internal;
+  helper.visible = true;
   group.add(helper);
   rig.group = group; rig.light = light; rig.helper = helper; rig.watts = watts; rig.color = `#${clr.getHexString().toUpperCase()}`; rig.size = size; rig.radius = radius; rig.shadows = shadows;
   state.scene.add(group);
   syncLightRigProperties(rig);
   return rig;
-}
-
-function spawnBootstrapDirectionalLight() {
-  if (state.bootstrapDirectionalRig || !state.scene) return;
-  const rig = buildLightRig('directional', {
-    id: 'bootstrap_directional',
-    name: 'Bootstrap Directional',
-    internal: true,
-    watts: 0,
-    color: '#FFFFFF',
-    size: 1,
-    radius: 0,
-    shadows: true,
-    group: { position: new THREE.Vector3(4, 6, 3), quaternion: new THREE.Quaternion() },
-  });
-  rig.group.position.set(4, 6, 3);
-  rig.group.lookAt(state.controls?.target || new THREE.Vector3());
-  rig.helper.visible = false;
-  rig.group.userData.internalLight = true;
-  rig.light.castShadow = true;
-  rig.light.visible = true;
-  rig.light.intensity = 0;
-  configureLightShadowDefaults(rig.light, 'directional');
-  state.bootstrapDirectionalRig = rig;
-  clearSelection();
 }
 
 function syncLightRigProperties(rig) {
@@ -1771,13 +1787,10 @@ function syncLightRigProperties(rig) {
   }
   if (rig.light.isDirectionalLight || rig.light.isSpotLight || rig.light.isPointLight) {
     rig.light.castShadow = !!rig.shadows;
-    configureLightShadowDefaults(rig.light, type);
   }
   if (rig.helper) {
-    rig.helper.visible = !rig.internal;
     rig.helper.traverse((o) => { if (o.material?.color) o.material.color.copy(clr); });
-    rig.helper.scale.setScalar(1);
-    if (type === 'rectarea' || type === 'helix' || type === 'spot') rig.helper.scale.setScalar(Math.max(0.5, rig.size || 1));
+    if (type === 'rectarea') rig.helper.scale.setScalar(Math.max(0.5, rig.size || 1));
     if (type === 'point' || type === 'hemisphere') rig.helper.scale.setScalar(Math.max(0.5, rig.size || 1));
   }
   if (rig.group) rig.group.name = rig.name;
@@ -1801,16 +1814,11 @@ function refreshLightUI() {
   if (delBtn) { delBtn.disabled = !rig; delBtn.title = rig ? 'Delete selected light' : 'Select a light to delete.'; }
   const selectedType = $("lightTypeSelect")?.value || 'directional';
   if (updBtn) { updBtn.disabled = !rig || rig.type === selectedType; updBtn.title = rig ? (rig.type === selectedType ? 'pick a new light type to update.' : 'Update selected light type') : 'Select a light to update.'; }
-  if (tip) tip.textContent = rig ? `Selected ${rig.name}` : 'Add a light to begin.';
+  if (tip) tip.textContent = rig ? `Selected ${rig.name}` : 'Add a light to begin, then select it from the object list to edit it.';
   $("lightSettingsEmpty").style.display = rig ? 'none' : 'block';
   $("lightSettingsPanel").style.display = rig ? 'block' : 'none';
-  const sizeWrap = $("selectedLightSizeWrap");
-  if (!rig) {
-    if (sizeWrap) sizeWrap.style.display = 'none';
-    return;
-  }
-  const allowSize = ["spot", "rectarea", "helix"].includes(rig.type);
-  if (sizeWrap) sizeWrap.style.display = allowSize ? 'grid' : 'none';
+  if ($("lightSizeRow")) $("lightSizeRow").style.display = rig && ['spot', 'rectarea', 'helix'].includes(rig.type) ? 'grid' : 'none';
+  if (!rig) return;
   $("selectedLightIntensity").value = String(rig.watts);
   $("selectedLightIntensityVal").value = String(rig.watts);
   $("selectedLightColor").value = rig.color;
@@ -1860,11 +1868,73 @@ function updateSelectedLightSetting(which, value) {
   if (!rig) return;
   if (which === 'watts') rig.watts = Number(value);
   if (which === 'color') rig.color = value.startsWith('#') ? value : `#${value.replace(/^#?/,'')}`;
-  if (which === 'size') rig.size = Number(value);
+  if (which === 'size' && ['spot', 'rectarea', 'helix'].includes(rig.type)) rig.size = Number(value);
   if (which === 'radius') rig.radius = Number(value);
   if (which === 'shadows') rig.shadows = !!value;
   syncLightRigProperties(rig);
   refreshLightUI();
+}
+
+function makeAmbientOcclusionTexture() {
+  const canvas = document.createElement("canvas");
+  canvas.width = 512;
+  canvas.height = 512;
+  const ctx = make2DContext(canvas);
+  if (!ctx) return null;
+  const g = ctx.createRadialGradient(256, 256, 24, 256, 256, 256);
+  g.addColorStop(0.0, 'rgba(0,0,0,0.72)');
+  g.addColorStop(0.28, 'rgba(0,0,0,0.34)');
+  g.addColorStop(0.58, 'rgba(0,0,0,0.12)');
+  g.addColorStop(1.0, 'rgba(0,0,0,0)');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, 512, 512);
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.needsUpdate = true;
+  return tex;
+}
+
+function ensureAmbientOcclusionMesh() {
+  if (state.floor.aoMesh) return state.floor.aoMesh;
+  state.floor.aoTexture = state.floor.aoTexture || makeAmbientOcclusionTexture();
+  const geo = new THREE.PlaneGeometry(1, 1, 1, 1);
+  const mat = new THREE.MeshBasicMaterial({
+    map: state.floor.aoTexture || null,
+    transparent: true,
+    opacity: 0.34,
+    depthWrite: false,
+    toneMapped: false,
+    side: THREE.DoubleSide,
+  });
+  mat.polygonOffset = true;
+  mat.polygonOffsetFactor = -2;
+  mat.polygonOffsetUnits = -2;
+  const mesh = new THREE.Mesh(geo, mat);
+  mesh.name = 'Ambient Occlusion Overlay';
+  mesh.rotation.x = -Math.PI / 2;
+  mesh.visible = false;
+  mesh.renderOrder = 4;
+  state.floor.aoMesh = mesh;
+  state.scene?.add(mesh);
+  return mesh;
+}
+
+function updateAmbientOcclusionOverlay() {
+  const mesh = ensureAmbientOcclusionMesh();
+  if (!mesh) return;
+  const enabled = !!state.lighting.aoEnabled && !!state.floor.mesh && !!state.root && state.floor.mesh.visible && state.root.visible;
+  if (!enabled) {
+    mesh.visible = false;
+    return;
+  }
+  const size = TMP.v1.set(0, 0, 0);
+  new THREE.Box3().setFromObject(state.root).getSize(size);
+  const width = Math.max(0.5, size.x * 1.18, state.modelRadius * 1.65);
+  const depth = Math.max(0.5, size.z * 1.18, state.modelRadius * 1.65);
+  mesh.position.set(state.modelCenter.x, state.floor.mesh.position.y + 0.006, state.modelCenter.z);
+  mesh.scale.set(width, depth, 1);
+  mesh.material.opacity = THREE.MathUtils.clamp(0.22 + state.modelRadius * 0.03, 0.22, 0.42);
+  mesh.visible = state.floor.mesh.visible;
 }
 
 function makeFloorPlane() {
@@ -1901,9 +1971,11 @@ function toggleFloorPlane() {
     state.floor.mesh.geometry.dispose?.();
     disposeMaterial(state.floor.mesh.material);
     state.floor.mesh = null;
+    if (state.floor.aoMesh) { state.floor.aoMesh.visible = false; }
     buildObjectList();
     updateFloorButton();
     updateHelixShadowLight();
+    updateAmbientOcclusionOverlay();
     log("Floor plane removed.");
     return;
   }
@@ -1915,6 +1987,7 @@ function toggleFloorPlane() {
   buildObjectList();
   updateFloorButton();
   updateHelixShadowLight();
+  updateAmbientOcclusionOverlay();
   log("Floor plane added.");
 }
 
@@ -1931,7 +2004,7 @@ function buildObjectList() {
   }
   state.lights.rigs.forEach((rig) => state.objects.unshift({ id: rig.id, name: rig.name, path: rig.name, obj: rig.group, special: true, kind: 'light' }));
   if (state.floor.mesh) state.objects.unshift({ id: "floor", name: "Floor Plane", path: "Floor Plane", obj: state.floor.mesh, special: true });
-  if (state.gsplat.object) state.objects.unshift({ id: "gsplat", name: "GSplat Scene (WIP)", path: "GSplat Scene (WIP)", obj: state.gsplat.object, special: true });
+  if (state.gsplat.object) state.objects.unshift({ id: "gsplat", name: "GSplat Scene", path: "GSplat Scene", obj: state.gsplat.object, special: true });
   renderObjectList();
 }
 
@@ -1979,6 +2052,8 @@ function renderObjectList() {
     eye.title = item.obj.visible ? "Hide" : "Show";
     eye.onclick = () => {
       item.obj.visible = !item.obj.visible;
+      if (item.id === 'floor' || item.id === 'model_root') updateAmbientOcclusionOverlay();
+      state.preview.dirty = true;
       renderObjectList();
     };
 
@@ -2544,7 +2619,6 @@ function getSceneSnapshotMetadata() {
       apertureF: state.cameraRig.apertureF,
       focalDistance: state.cameraRig.focalDistance,
       blurScaleRatio: state.cameraRig.blurScaleRatio,
-      focusWorldPoint: getFocusWorldPoint().toArray(),
       sensorPreset: state.cameraRig.sensorPreset,
       sensorWidth: state.cameraRig.sensorWidth,
       sensorHeight: state.cameraRig.sensorHeight,
@@ -2572,11 +2646,18 @@ function getSceneSnapshotMetadata() {
       hdriSelectedUrl: state.hdri.selectedUrl || "",
       hdriUsedAsBackground: !!$("hdriUseAsBg")?.checked,
       background: $("bg")?.value || "transparent",
+      colorCorrection: getLevelsConfig(),
       lightingPreset: $("light")?.value || "studio",
       previewBloom: Number($("previewBloom")?.value || 0),
       aoEnabled: !!$("aoEnabled")?.checked,
       colorPipeline: getColorPipelineConfig(),
-      colorCorrection: getColorCorrectionConfig(),
+      imageLabelling: {
+        enabled: !!state.imageLabel.enabled,
+        position: { ...state.imageLabel.position },
+        scale: state.imageLabel.scale,
+        color: state.imageLabel.color,
+        text: state.imageLabel.text,
+      },
     },
   };
 }
@@ -2585,7 +2666,7 @@ function buildImageMetadata({ shotName = "capture", fileName = "capture.png", ex
   const extra = getAdditionalMetadataText();
   return {
     app: "GLB Screenshot Exporter",
-    version: "v1.6.8",
+    version: "v1.7.0",
     createdAt: new Date().toISOString(),
     shotName,
     fileName,
@@ -2654,7 +2735,7 @@ async function embedMetadataInPngBlob(blob, metadata) {
   const bytes = new Uint8Array(await blob.arrayBuffer());
   if (bytes.length < 12 || !PNG_SIGNATURE.every((v, i) => bytes[i] === v)) return blob;
   const text = JSON.stringify(metadata);
-  const softwareChunk = buildPngITXtChunk("Software", "GLB Screenshot Exporter v1.6.8");
+  const softwareChunk = buildPngITXtChunk("Software", "GLB Screenshot Exporter v1.7.0");
   const descriptionChunk = buildPngITXtChunk("Description", text);
   const iendIndex = bytes.length - 12;
   const out = concatUint8Arrays([bytes.slice(0, iendIndex), softwareChunk, descriptionChunk, bytes.slice(iendIndex)]);
@@ -2684,12 +2765,12 @@ function findAlphaBounds(canvas) {
 
 function projectFocusPoint(canvas) {
   const cam = state.camera;
-  const target = getFocusWorldPoint();
-  const ndc = target.project(cam);
+  const focusPoint = state.cameraRig.focusWorldPoint?.clone?.() || state.controls?.target?.clone?.() || state.modelCenter.clone();
+  const ndc = focusPoint.project(cam);
   return {
-    x: THREE.MathUtils.clamp((ndc.x * 0.5 + 0.5) * canvas.width, -canvas.width, canvas.width * 2),
-    y: THREE.MathUtils.clamp((-ndc.y * 0.5 + 0.5) * canvas.height, -canvas.height, canvas.height * 2),
-    dist: cam.position.distanceTo(target),
+    x: (ndc.x * 0.5 + 0.5) * canvas.width,
+    y: (-ndc.y * 0.5 + 0.5) * canvas.height,
+    dist: cam.position.distanceTo(focusPoint),
   };
 }
 
@@ -2705,9 +2786,11 @@ function applyLocalDOF(sourceCanvas, previewMode = false) {
   const blurScaleRatio = THREE.MathUtils.clamp(state.cameraRig.blurScaleRatio || 1, 0.1, 5);
   const focalFactor = THREE.MathUtils.clamp(focalLength / 50, 0.4, 4.0);
   const sensorFactor = THREE.MathUtils.clamp(sensorWidth / 36, 0.45, 2.4);
+  const apertureFactor = THREE.MathUtils.clamp(Math.pow(2.0 / aperture, 1.35), 0.02, 6.5);
   const focusError = Math.abs(focus.dist - focusDist) / Math.max(0.25, focus.dist, focusDist);
-  const baseBlur = THREE.MathUtils.clamp((((18 / aperture) * focalFactor * sensorFactor) + (focusError * 12 * focalFactor)) * (previewMode ? 0.65 : 0.95), 0, previewMode ? 9 : 18);
-  if (baseBlur < 0.5) return sourceCanvas;
+  const blurEnergy = (6.2 * apertureFactor * focalFactor * sensorFactor) + (focusError * 19 * apertureFactor * focalFactor * sensorFactor);
+  const baseBlur = THREE.MathUtils.clamp(blurEnergy * (previewMode ? 0.55 : 0.9), 0, previewMode ? 12 : 24);
+  if (baseBlur < 0.35 || (aperture >= 12 && focusError < 0.025)) return sourceCanvas;
 
   const out = document.createElement("canvas");
   out.width = w; out.height = h;
@@ -2719,10 +2802,10 @@ function applyLocalDOF(sourceCanvas, previewMode = false) {
   const bctx = make2DContext(blurred);
   if (!bctx) return sourceCanvas;
 
-  const sizeBoost = blurScaleRatio < 1 ? Math.pow(1 / blurScaleRatio, 0.32) : 1;
+  const sizeBoost = blurScaleRatio < 1 ? Math.pow(1 / blurScaleRatio, 0.34) : 1;
   const stretchX = blurScaleRatio > 1 ? blurScaleRatio : 1;
   const stretchY = blurScaleRatio > 1 ? (1 / Math.sqrt(blurScaleRatio)) : 1;
-  const blurPx = THREE.MathUtils.clamp(baseBlur * sizeBoost, 0, previewMode ? 10 : 20);
+  const blurPx = THREE.MathUtils.clamp(baseBlur * sizeBoost, 0, previewMode ? 14 : 28);
   const scaledW = Math.max(2, Math.round(w / stretchX));
   const scaledH = Math.max(2, Math.round(h / stretchY));
   const squashed = document.createElement("canvas");
@@ -2742,12 +2825,11 @@ function applyLocalDOF(sourceCanvas, previewMode = false) {
   if (!sctx) return sourceCanvas;
   sctx.drawImage(sourceCanvas, 0, 0);
 
-  const apertureOpen = THREE.MathUtils.clamp((8 / aperture), 0.25, 8.0);
   const focusRadiusBase = Math.min(w, h) * 0.18;
-  const focusRadiusX = THREE.MathUtils.clamp(focusRadiusBase / (apertureOpen * focalFactor * sensorFactor * 0.45), Math.min(w, h) * 0.05, Math.min(w, h) * 0.44);
-  const focusRatioY = blurScaleRatio > 1 ? 0.72 / Math.sqrt(blurScaleRatio) : (0.86 + Math.min(0.24, (1 / blurScaleRatio - 1) * 0.06));
+  const focusRadiusX = THREE.MathUtils.clamp(focusRadiusBase / Math.max(0.14, apertureFactor * focalFactor * sensorFactor * 0.82), Math.min(w, h) * 0.06, Math.min(w, h) * 0.52);
+  const focusRatioY = blurScaleRatio > 1 ? 0.72 / Math.sqrt(blurScaleRatio) : (0.88 + Math.min(0.22, (1 / blurScaleRatio - 1) * 0.06));
   const focusRadiusY = focusRadiusX * focusRatioY;
-  const feather = Math.max(18, focusRadiusX * 1.15);
+  const feather = Math.max(18, focusRadiusX * 1.2);
 
   sctx.save();
   sctx.globalCompositeOperation = 'destination-in';
@@ -2755,7 +2837,7 @@ function applyLocalDOF(sourceCanvas, previewMode = false) {
   sctx.scale(1, focusRadiusY / Math.max(1, focusRadiusX));
   const g = sctx.createRadialGradient(0, 0, 0, 0, 0, focusRadiusX + feather);
   g.addColorStop(0, 'rgba(255,255,255,1)');
-  g.addColorStop(0.62, 'rgba(255,255,255,0.98)');
+  g.addColorStop(0.58, 'rgba(255,255,255,0.995)');
   g.addColorStop(1, 'rgba(255,255,255,0)');
   sctx.fillStyle = g;
   sctx.beginPath();
@@ -2917,29 +2999,21 @@ function applyGlobalGrade(sourceCanvas, previewMode = false) {
   ctx.filter = `contrast(${previewMode ? 104 : 108}%) saturate(${previewMode ? 106 : 110}%) brightness(${previewMode ? 105 : 103}%)`;
   ctx.drawImage(sourceCanvas, 0, 0);
   ctx.restore();
-  if (state.lighting.aoEnabled && state.floor.mesh) {
-    const w = out.width, h = out.height;
-    const g = ctx.createRadialGradient(w * 0.5, h * 0.72, 0, w * 0.5, h * 0.72, Math.min(w, h) * 0.42);
-    g.addColorStop(0, 'rgba(0,0,0,0.12)');
-    g.addColorStop(1, 'rgba(0,0,0,0)');
-    ctx.fillStyle = g;
-    ctx.fillRect(0, 0, w, h);
-  }
   return applyColorPipeline(out);
 }
 
-async function renderStyledStillCanvas(sizePx, previewMode = false) {
+async function renderStyledStillCanvas(sizePx, previewMode = false, shotName = 'capture') {
   const useRealBg = getUseRealBackground();
   const aspect = Math.max(0.25, state.camera.aspect || 1);
   const dims = typeof sizePx === "object" ? sizePx : (aspect >= 1 ? { width: Math.round(sizePx), height: Math.round(sizePx / aspect) } : { width: Math.round(sizePx * aspect), height: Math.round(sizePx) });
-  const transparent = !useRealBg && ($("bg")?.value === "transparent");
-  const sourceCanvas = await renderRawStill(dims, { transparent });
-  return applyGlobalGrade(sourceCanvas, previewMode);
+  const sourceCanvas = await renderRawStill(dims, { transparent: !useRealBg && getBackgroundConfig().alpha === 0 });
+  const graded = applyGlobalGrade(sourceCanvas, previewMode);
+  return applyImageLabelToCanvas(graded, shotName);
 }
 
-async function renderStyledStillBlob(sizePx, metadata = null) {
+async function renderStyledStillBlob(sizePx, metadata = null, shotName = 'capture') {
   const dims = getViewportFrameDims(sizePx);
-  const finalCanvas = await renderStyledStillCanvas(dims, false);
+  const finalCanvas = await renderStyledStillCanvas(dims, false, shotName);
   const blob = await new Promise((resolve, reject) => {
     finalCanvas.toBlob((encoded) => encoded ? resolve(encoded) : reject(new Error("PNG encoding failed.")), "image/png");
   });
@@ -2960,7 +3034,7 @@ async function captureCurrentStill() {
     const baseName = (($("fileName").textContent || "capture").split(" (")[0] || "capture").replace(/\.[^/.]+$/, "");
     const ts = new Date().toISOString().replace(/[:.]/g, "-");
     const fileName = `${baseName}_capture_${sizePx}_${ts}.png`;
-    const blob = await renderStyledStillBlob(sizePx, buildImageMetadata({ shotName: "capture", fileName, exportContext: "single_capture" }));
+    const blob = await renderStyledStillBlob(sizePx, buildImageMetadata({ shotName: "capture", fileName, exportContext: "single_capture" }), "capture");
     downloadBlob(blob, fileName);
     flashCapture();
     log("Still captured.");
@@ -3053,7 +3127,7 @@ async function exportZip() {
       if (!state.helix.manual) setHelixLightPose(shots.length === 1 ? 0 : i / Math.max(1, shots.length - 1));
       const fileName = `${shot.name}.png`;
       const imageMetadata = buildImageMetadata({ shotName: shot.name, fileName, exportContext: "zip_export" });
-      const blob = await renderStyledStillBlob(sizePx, imageMetadata);
+      const blob = await renderStyledStillBlob(sizePx, imageMetadata, shot.name);
       imgFolder.file(fileName, blob);
       shotMeta.push({
         name: shot.name,
@@ -3067,7 +3141,7 @@ async function exportZip() {
     }
 
     zip.file("metadata.json", JSON.stringify({
-      version: "v1.6.8",
+      version: "v1.7.0",
       createdAt: new Date().toISOString(),
       additionalInformation: getAdditionalMetadataText(),
       export: {
@@ -3077,7 +3151,6 @@ async function exportZip() {
         background: $("bg").value,
         lightingPreset: $("light").value,
         previewBloom: Number($("previewBloom").value),
-        colorCorrection: getColorCorrectionConfig(),
         cycleHdris,
         shotsPerHdri,
         colorPipeline: getColorPipelineConfig(),
@@ -3157,6 +3230,7 @@ async function loadGLBFile(file) {
     updatePreviewButtons();
     updateHelixShadowLight();
     setBadge("Ready");
+    updateImageLabelGhost();
     log("Model loaded.");
   } catch (e) {
     log(`GLB load failed: ${e?.message || e}`);
@@ -3212,11 +3286,13 @@ function wireCameraControls() {
     copyMainCameraToPreview();
   });
   $("focalDistance")?.addEventListener("input", () => {
-    setFocusDistanceMeters($("focalDistance").value || 6);
+    state.cameraRig.focalDistance = THREE.MathUtils.clamp(Number($("focalDistance").value || 6), 0.2, 50);
+    if ($("focalDistanceVal")) $("focalDistanceVal").textContent = state.cameraRig.focalDistance.toFixed(1);
+    state.camera.focus = state.cameraRig.focalDistance;
+    if (state.gsplat.sparkRenderer) state.gsplat.sparkRenderer.focalDistance = state.cameraRig.focalDistance;
+    copyMainCameraToPreview();
   });
-  $("pickFocusPoint")?.addEventListener("click", () => {
-    setFocusPickActive(!state.focusPick.active);
-  });
+  $("focusPickBtn")?.addEventListener("click", () => toggleFocusPickMode());
   bindRangeNumber("blurScaleRatio", "blurScaleRatioNum", (value) => {
     state.cameraRig.blurScaleRatio = THREE.MathUtils.clamp(value, 0.1, 5);
     copyMainCameraToPreview();
@@ -3254,12 +3330,14 @@ function wireUI() {
   setTransformMode("translate");
 
   $("padVal").textContent = $("pad").value;
-  $("previewBloomVal").textContent = Number($("previewBloom").value).toFixed(2);
+  $("previewBloomVal").value = Number($("previewBloom").value).toFixed(2);
   if ($("focalDistanceVal")) $("focalDistanceVal").textContent = Number($("focalDistance").value).toFixed(1);
   if ($("blurScaleRatioNum")) $("blurScaleRatioNum").value = Number(state.cameraRig.blurScaleRatio).toFixed(2);
   refreshColorModeUI();
-  refreshColorCorrectionUI();
+  syncLevelsUI();
   updateFocusPickButton();
+  updateImageLabelGhost();
+  showImageLabelEditor(false);
 
   $("file").addEventListener("change", (e) => {
     const file = e.target.files?.[0];
@@ -3290,26 +3368,9 @@ function wireUI() {
   });
   $("aoEnabled")?.addEventListener("change", () => {
     state.lighting.aoEnabled = !!$("aoEnabled").checked;
+    updateAmbientOcclusionOverlay();
     state.preview.dirty = true;
   });
-
-  bindLevelsControl("ccInputBlack", "ccInputBlackVal", "inBlack", Number);
-  bindLevelsControl("ccGamma", "ccGammaVal", "gamma", Number);
-  bindLevelsControl("ccInputWhite", "ccInputWhiteVal", "inWhite", Number);
-  bindLevelsControl("ccOutputBlack", "ccOutputBlackVal", "outBlack", Number);
-  bindLevelsControl("ccOutputWhite", "ccOutputWhiteVal", "outWhite", Number);
-  $("ccTabLevels")?.addEventListener("click", () => {
-    state.colorCorrection.mode = "levels";
-    refreshColorCorrectionUI();
-    updateColorCorrection();
-  });
-  $("ccTabCurves")?.addEventListener("click", () => {
-    state.colorCorrection.mode = "curves";
-    refreshColorCorrectionUI();
-    updateColorCorrection();
-  });
-  $("ccReset")?.addEventListener("click", resetColorCorrection);
-  wireCurveEditor();
 
   $("addLight").addEventListener("click", addLightFromUI);
   $("deleteLight").addEventListener("click", deleteSelectedLight);
@@ -3329,6 +3390,10 @@ function wireUI() {
     if (advanced) syncBasicColorToAdvanced();
     else syncAdvancedColorToBasic();
     refreshColorModeUI();
+  syncLevelsUI();
+  updateFocusPickButton();
+  updateImageLabelGhost();
+  showImageLabelEditor(false);
     updateDisplayColorPipeline();
   });
   $("colorSpaceBasic")?.addEventListener("change", () => {
@@ -3341,12 +3406,46 @@ function wireUI() {
     updateDisplayColorPipeline();
   });
   $("lutSelect")?.addEventListener("change", () => {
+    state.preview.dirty = true;
+  });
+  const handleLevelsChange = () => {
+    syncLevelsUI(getLevelsConfig());
+    updateDisplayColorPipeline();
+    copyMainCameraToPreview();
+  };
+  [["levelsInBlack","levelsInBlackVal"],["levelsGamma","levelsGammaVal"],["levelsInWhite","levelsInWhiteVal"],["levelsOutBlack","levelsOutBlackVal"],["levelsOutWhite","levelsOutWhiteVal"]].forEach(([rangeId, numId]) => {
+    $(rangeId)?.addEventListener("input", () => { if ($(numId)) $(numId).value = $(rangeId).value; handleLevelsChange(); });
+    $(rangeId)?.addEventListener("change", () => { if ($(numId)) $(numId).value = $(rangeId).value; handleLevelsChange(); });
+    $(numId)?.addEventListener("input", () => { if ($(rangeId)) $(rangeId).value = $(numId).value; handleLevelsChange(); });
+    $(numId)?.addEventListener("change", () => { if ($(rangeId)) $(rangeId).value = $(numId).value; handleLevelsChange(); });
+  });
+  $("resetLevels")?.addEventListener("click", () => {
+    syncLevelsUI(clampLevelsConfig({ inBlack: 0, gamma: 1, inWhite: 255, outBlack: 0, outWhite: 255 }));
+    updateDisplayColorPipeline();
     copyMainCameraToPreview();
   });
+  $("levelsGraphBar")?.addEventListener("pointerdown", onLevelsGraphPointerDown);
+  $("levelsGraphBar")?.addEventListener("pointermove", onLevelsGraphPointerMove);
+  $("levelsGraphBar")?.addEventListener("pointerup", onLevelsGraphPointerUp);
+  $("levelsGraphBar")?.addEventListener("pointercancel", onLevelsGraphPointerUp);
+
+
   $("addExtraMetadata")?.addEventListener("change", () => {
     const on = !!$("addExtraMetadata").checked;
     if ($("additionalMetadataWrap")) $("additionalMetadataWrap").style.display = on ? "block" : "none";
   });
+  $("enableImageLabelling")?.addEventListener("change", () => {
+    const on = !!$("enableImageLabelling").checked;
+    if (on) startImageLabelWorkflow();
+    else finishImageLabelMode(false);
+  });
+  $("imageLabelColor")?.addEventListener("input", () => {
+    state.imageLabel.color = $("imageLabelColor").value || '#FFFFFF';
+    updateImageLabelGhost();
+    state.preview.dirty = true;
+  });
+  $("imageLabelDone")?.addEventListener("click", () => finishImageLabelMode(true));
+  $("imageLabelCancel")?.addEventListener("click", () => finishImageLabelMode(false));
   $("gsplatOffsetX")?.addEventListener("input", applyGsplatOffsets);
   $("gsplatOffsetY")?.addEventListener("input", applyGsplatOffsets);
   $("gsplatOffsetZ")?.addEventListener("input", applyGsplatOffsets);
@@ -3439,6 +3538,7 @@ function wireUI() {
 
   syncCameraUIFromView();
   state.lighting.aoEnabled = !!$("aoEnabled")?.checked;
+  updateAmbientOcclusionOverlay();
   state.gsplat.useForLighting = !!$("gsplatUseLighting")?.checked;
   state.gsplat.quality = $("gsplatQuality")?.value || "medium";
   if ($("advancedColorPanel")) $("advancedColorPanel").style.display = "none";
