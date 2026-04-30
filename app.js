@@ -257,29 +257,24 @@ function getActiveDisplayColorSpace() {
   return cfg.advanced ? (cfg.output || "srgb") : (cfg.basic || "srgb");
 }
 
-function getRendererColorProfile(space = getActiveDisplayColorSpace()) {
-  const linearSpace = ("LinearSRGBColorSpace" in THREE) ? THREE.LinearSRGBColorSpace : THREE.SRGBColorSpace;
-  const agxTone = THREE.AgXToneMapping ?? THREE.ACESFilmicToneMapping;
+function getRendererColorProfile(space = "srgb") {
   const neutralTone = THREE.NeutralToneMapping ?? THREE.ACESFilmicToneMapping;
-  switch (space) {
-    case "linear":
-      return { outputColorSpace: linearSpace, toneMapping: THREE.NoToneMapping, exposure: 1.0, cssFilter: "brightness(1.02) contrast(0.98)", canvasFilter: "brightness(102%) contrast(98%)" };
-    case "aces":
-      return { outputColorSpace: THREE.SRGBColorSpace, toneMapping: THREE.ACESFilmicToneMapping, exposure: 1.0, cssFilter: "none", canvasFilter: "none" };
-    case "agx":
-      return { outputColorSpace: THREE.SRGBColorSpace, toneMapping: agxTone, exposure: 1.0, cssFilter: "saturate(0.98) contrast(1.01)", canvasFilter: "saturate(98%) contrast(101%)" };
-    case "rec709":
-      return { outputColorSpace: THREE.SRGBColorSpace, toneMapping: neutralTone, exposure: 1.0, cssFilter: "contrast(0.99) saturate(0.97)", canvasFilter: "contrast(99%) saturate(97%)" };
-    case "displayp3":
-      return { outputColorSpace: THREE.SRGBColorSpace, toneMapping: THREE.ACESFilmicToneMapping, exposure: 1.0, cssFilter: "saturate(1.06) contrast(1.01)", canvasFilter: "saturate(106%) contrast(101%)" };
-    case "log":
-      return { outputColorSpace: THREE.SRGBColorSpace, toneMapping: THREE.NoToneMapping, exposure: 1.0, cssFilter: "contrast(0.78) saturate(0.92) brightness(1.05)", canvasFilter: "contrast(78%) saturate(92%) brightness(105%)" };
-    case "raw":
-      return { outputColorSpace: linearSpace, toneMapping: THREE.NoToneMapping, exposure: 1.0, cssFilter: "none", canvasFilter: "none" };
-    case "srgb":
-    default:
-      return { outputColorSpace: THREE.SRGBColorSpace, toneMapping: THREE.ACESFilmicToneMapping, exposure: 1.0, cssFilter: "none", canvasFilter: "none" };
-  }
+  return {
+    outputColorSpace: THREE.SRGBColorSpace,
+    toneMapping: neutralTone,
+    exposure: 1.0,
+    cssFilter: "none",
+    canvasFilter: "none",
+  };
+}
+
+function getSafeExportColorProfile() {
+  const neutralTone = THREE.NeutralToneMapping ?? THREE.ACESFilmicToneMapping;
+  return {
+    outputColorSpace: THREE.SRGBColorSpace,
+    toneMapping: neutralTone,
+    exposure: 1.0,
+  };
 }
 
 function cloneCanvasWithFilter(canvas, filter) {
@@ -544,8 +539,9 @@ function applyLUTToCanvas(canvas, lutName) {
 function applyColorPipeline(canvas) {
   const cfg = getColorPipelineConfig();
   let out = canvas;
-  if (cfg.advanced) out = cloneCanvasWithFilter(out, getRendererColorProfile(cfg.input || 'srgb').canvasFilter);
-  out = cloneCanvasWithFilter(out, getRendererColorProfile(getActiveDisplayColorSpace()).canvasFilter);
+  // Exports/previews are always encoded through a clean sRGB render path.
+  // Colour-space dropdowns are kept for UI compatibility, but no longer add extra
+  // canvas filtering here because that was causing export-only colour shifts.
   out = applyLUTToCanvas(out, cfg.advanced ? cfg.lut : 'standard');
   out = applyLevelsToCanvas(out);
   return out;
@@ -1184,7 +1180,7 @@ function init3D() {
     preserveDrawingBuffer: true,
   });
   renderer.outputColorSpace = THREE.SRGBColorSpace;
-  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMapping = THREE.NeutralToneMapping ?? THREE.ACESFilmicToneMapping;
   renderer.toneMappingExposure = 1.0;
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
   renderer.shadowMap.enabled = true;
@@ -1256,7 +1252,13 @@ function init3D() {
   });
   scene.add(transformHelper);
 
-  scene.add(new THREE.AmbientLight(0xffffff, 0.35));
+  scene.add(new THREE.AmbientLight(0xffffff, 0.28));
+
+  const defaultHemisphere = new THREE.HemisphereLight(0xffffff, 0x6f7782, 0.62);
+  defaultHemisphere.name = "Default Hemisphere Fill";
+  defaultHemisphere.userData.defaultInvisibleFixtureLight = true;
+  scene.add(defaultHemisphere);
+  state.defaultHemisphereLight = defaultHemisphere;
 
   const bootstrapDirectional = new THREE.DirectionalLight(0xffffff, 0);
   bootstrapDirectional.name = 'Bootstrap Directional';
@@ -2617,64 +2619,45 @@ function compactQuat(value, digits = 4) {
   return [0, 0, 0, 1];
 }
 
-function getCompactBackgroundColor() {
-  if ($("hdriUseAsBg")?.checked && state.hdri.selectedUrl) return "hdri";
-  const cfg = getBackgroundConfig();
-  return cfg.css === "transparent" ? "transparent" : cfg.css;
-}
-
-function getCompactLightPosition(object) {
-  if (!object) return [0, 0, 0];
-  object.updateWorldMatrix?.(true, false);
-  const world = object.getWorldPosition ? object.getWorldPosition(new THREE.Vector3()) : object.position || new THREE.Vector3();
-  return compactVec3(world, 3);
-}
-
-function getCompactLightMetadata() {
-  const lights = [];
-  state.lights.rigs.forEach((rig) => {
-    if (!rig?.group) return;
-    lights.push([rig.type, getCompactLightPosition(rig.group)]);
-  });
-  if (state.helix.enabled && state.helix.light && state.helix.intensity > 0.001) {
-    lights.push(["helix", getCompactLightPosition(state.helix.light)]);
-  }
-  return lights;
-}
-
-function getCompactModelMeasurements() {
-  const dims = state.stats?.dimensionsCM || { x: 0, y: 0, z: 0 };
-  return [
-    roundMetaValue(dims.x, 2),
-    roundMetaValue(dims.y, 2),
-    roundMetaValue(dims.z, 2),
-  ];
-}
-
 function getCurrentFrustumValue() {
   return roundMetaValue(state.camera?.fov || 0, 3);
 }
 
-function buildCompactShotRecord(name = "capture") {
-  return [
-    name,
-    compactVec3(state.camera?.position, 3),
-    compactQuat(state.camera?.quaternion, 4),
-    getCurrentFrustumValue(),
-  ];
+function getCameraRelativeDirectionLabel(position = state.camera?.position, target = state.controls?.target || state.modelCenter) {
+  const pos = position?.isVector3 ? position : new THREE.Vector3().fromArray(compactVec3(position));
+  const tgt = target?.isVector3 ? target : new THREE.Vector3().fromArray(compactVec3(target));
+  const dir = pos.clone().sub(tgt);
+  if (dir.lengthSq() < 0.000001) return "Front-Neutral";
+
+  const absX = Math.abs(dir.x);
+  const absZ = Math.abs(dir.z);
+  let side = "Front";
+  if (absX > absZ) side = dir.x < 0 ? "Left" : "Right";
+  else side = dir.z < 0 ? "Back" : "Front";
+
+  const horizontal = Math.max(0.0001, Math.sqrt(dir.x * dir.x + dir.z * dir.z));
+  const pitchDeg = THREE.MathUtils.radToDeg(Math.atan2(dir.y, horizontal));
+  const height = pitchDeg > 18 ? "High" : (pitchDeg < -12 ? "Low" : "Neutral");
+  return `${side}-${height}`;
 }
 
-function buildCompactMetadata({ name = "capture", shots = [] } = {}) {
+function buildAngleRecord({ imageFileName = "capture.png", angleLabel = "Capture" } = {}) {
+  return {
+    imageFileName,
+    angleLabel,
+    CameraPosition: compactVec3(state.camera?.position, 3),
+    CameraRotation: compactQuat(state.camera?.quaternion, 4),
+    CameraFrustum: getCurrentFrustumValue(),
+  };
+}
+
+function buildReadableMetadata({ AngleList = [], POIList = [] } = {}) {
   const metadata = {
-    n: name,
-    s: shots,
-    b: getCompactBackgroundColor(),
-    l: getCompactLightMetadata(),
-    t: Math.round(state.stats?.triangles || 0),
-    m: getCompactModelMeasurements(),
+    AngleList: AngleList.length ? AngleList : "none",
+    POIList: POIList.length ? POIList : "none",
   };
   const additional = getAdditionalMetadataText();
-  if (additional) metadata.i = additional;
+  if (additional) metadata.AdditionalInformation = additional;
   return metadata;
 }
 
@@ -2736,7 +2719,7 @@ async function embedMetadataInPngBlob(blob, metadata) {
   const bytes = new Uint8Array(await blob.arrayBuffer());
   if (bytes.length < 12 || !PNG_SIGNATURE.every((v, i) => bytes[i] === v)) return blob;
   const text = JSON.stringify(metadata);
-  const softwareChunk = buildPngITXtChunk("Software", "GLB Screenshot Exporter v1.7.4");
+  const softwareChunk = buildPngITXtChunk("Software", "GLB Screenshot Exporter v1.7.6");
   const descriptionChunk = buildPngITXtChunk("Description", text);
   const iendIndex = bytes.length - 12;
   const out = concatUint8Arrays([bytes.slice(0, iendIndex), softwareChunk, descriptionChunk, bytes.slice(iendIndex)]);
@@ -2939,6 +2922,9 @@ async function renderRawStill(sizePx, opts = {}) {
   const prevViewport = renderer.getViewport(new THREE.Vector4()).clone();
   const prevScissor = renderer.getScissor(new THREE.Vector4()).clone();
   const prevScissorTest = renderer.getScissorTest();
+  const prevOutputColorSpace = renderer.outputColorSpace;
+  const prevToneMapping = renderer.toneMapping;
+  const prevToneMappingExposure = renderer.toneMappingExposure;
   const restore = setOverlayObjectsVisible(false);
   const dims = typeof sizePx === "object" ? sizePx : (() => {
     const aspect = Math.max(0.25, state.camera.aspect || 1);
@@ -2952,9 +2938,14 @@ async function renderRawStill(sizePx, opts = {}) {
     depthBuffer: true,
     stencilBuffer: false,
   });
+  target.texture.colorSpace = THREE.SRGBColorSpace;
   if (renderer.capabilities.isWebGL2) target.samples = 4;
   const pixels = new Uint8Array(width * height * 4);
   try {
+    const safeProfile = getSafeExportColorProfile();
+    renderer.outputColorSpace = safeProfile.outputColorSpace;
+    renderer.toneMapping = safeProfile.toneMapping;
+    renderer.toneMappingExposure = safeProfile.exposure;
     renderer.xr.enabled = false;
     if (transparent) {
       state.scene.background = null;
@@ -2980,6 +2971,9 @@ async function renderRawStill(sizePx, opts = {}) {
     renderer.setViewport(prevViewport);
     renderer.setScissor(prevScissor);
     renderer.setScissorTest(prevScissorTest);
+    renderer.outputColorSpace = prevOutputColorSpace;
+    renderer.toneMapping = prevToneMapping;
+    renderer.toneMappingExposure = prevToneMappingExposure;
     camera.aspect = prevAspect;
     camera.updateProjectionMatrix();
     target.dispose();
@@ -2988,19 +2982,8 @@ async function renderRawStill(sizePx, opts = {}) {
 }
 
 function applyGlobalGrade(sourceCanvas, previewMode = false) {
-  sourceCanvas = applyLocalDOF(sourceCanvas, previewMode);
-  const out = document.createElement("canvas");
-  out.width = sourceCanvas.width;
-  out.height = sourceCanvas.height;
-  const ctx = make2DContext(out);
-  if (!ctx) return sourceCanvas;
-  if (!ctx) return sourceCanvas;
-  ctx.drawImage(sourceCanvas, 0, 0);
-  ctx.save();
-  ctx.filter = `contrast(${previewMode ? 104 : 108}%) saturate(${previewMode ? 106 : 110}%) brightness(${previewMode ? 105 : 103}%)`;
-  ctx.drawImage(sourceCanvas, 0, 0);
-  ctx.restore();
-  return applyColorPipeline(out);
+  const dofCanvas = applyLocalDOF(sourceCanvas, previewMode);
+  return applyColorPipeline(dofCanvas);
 }
 
 async function renderStyledStillCanvas(sizePx, previewMode = false, shotName = 'capture') {
@@ -3035,7 +3018,8 @@ async function captureCurrentStill() {
     const baseName = (($("fileName").textContent || "capture").split(" (")[0] || "capture").replace(/\.[^/.]+$/, "");
     const ts = new Date().toISOString().replace(/[:.]/g, "-");
     const fileName = `${baseName}_capture_${sizePx}_${ts}.png`;
-    const imageMetadata = buildCompactMetadata({ name: baseName, shots: [buildCompactShotRecord("capture")] });
+    const captureRecord = buildAngleRecord({ imageFileName: fileName, angleLabel: getCameraRelativeDirectionLabel() });
+    const imageMetadata = buildReadableMetadata({ AngleList: [captureRecord], POIList: [] });
     const blob = await renderStyledStillBlob(sizePx, imageMetadata, "capture");
     downloadBlob(blob, fileName);
     flashCapture();
@@ -3107,7 +3091,8 @@ async function exportZip() {
 
     const dist = state.camera.position.distanceTo(state.controls.target.clone());
     const center = state.modelCenter.clone();
-    const shotMeta = [];
+    const angleMeta = [];
+    const poiMeta = [];
 
     for (let i = 0; i < shots.length; i++) {
       const shot = shots[i];
@@ -3128,18 +3113,26 @@ async function exportZip() {
 
       if (!state.helix.manual) setHelixLightPose(shots.length === 1 ? 0 : i / Math.max(1, shots.length - 1));
       const fileName = `${shot.name}.png`;
-      const shotRecord = buildCompactShotRecord(shot.name);
-      const imageMetadata = buildCompactMetadata({ name: baseName, shots: [shotRecord] });
+      const angleLabel = shot.type === "poi" ? getCameraRelativeDirectionLabel() : shot.name;
+      const shotRecord = buildAngleRecord({ imageFileName: fileName, angleLabel });
+      const imageMetadata = buildReadableMetadata({
+        AngleList: shot.type === "poi" ? [] : [shotRecord],
+        POIList: shot.type === "poi" ? [shotRecord] : [],
+      });
       const blob = await renderStyledStillBlob(sizePx, imageMetadata, shot.name);
       imgFolder.file(fileName, blob);
-      shotMeta.push(shotRecord);
+      if (shot.type === "poi") poiMeta.push(shotRecord);
+      else angleMeta.push(shotRecord);
       log(`Rendered ${shot.name}.png`);
     }
 
-    zip.file("metadata.json", JSON.stringify(buildCompactMetadata({
-      name: baseName,
-      shots: shotMeta,
+    zip.file("metadata.json", JSON.stringify(buildReadableMetadata({
+      AngleList: angleMeta,
+      POIList: poiMeta,
     })));
+    if (poiMeta.length) {
+      zip.file("poi_list.json", JSON.stringify({ POIList: poiMeta }));
+    }
 
     const outBlob = await zip.generateAsync({ type: "blob", compression: "DEFLATE", compressionOptions: { level: 6 } });
     downloadBlob(outBlob, `export_${baseName}_${ts}.zip`);
